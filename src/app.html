@@ -89,10 +89,12 @@ button.tile:hover{border-color:var(--accent)}
 .list{display:flex;flex-direction:column;gap:6px}
 .row{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1.6fr) 210px;gap:12px;align-items:center;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:8px;padding:9px 12px;cursor:pointer}
 .row:hover{border-color:var(--accent)}
-.row.late{border-left-color:var(--bad)} .row.due{border-left-color:var(--accent)} .row.soon{border-left-color:var(--warn)}
+.row.late{border-left-color:var(--bad)} .row.due,.row.new{border-left-color:var(--accent)} .row.soon{border-left-color:var(--warn)}
 .row .who b{display:block}
 .row .who small,.row .what small{color:var(--muted);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row .act{display:flex;gap:6px;align-items:center;justify-content:flex-end}
+.row .act{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.btn.ok{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.fu-help{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:4px 0 12px;flex-wrap:wrap}.fu-help .sub{flex:1;min-width:240px}
 @media (max-width:640px){.row{grid-template-columns:1fr;gap:6px}.row .act{justify-content:flex-start}}
 /* Kanban */
 .board-scroll{overflow-x:auto;padding-bottom:10px;margin-inline:-4px}
@@ -233,7 +235,7 @@ const TEMPLATES=[
  {k:'webinar',n:'Undangan webinar',t:'Selamat {waktu} {sapaan} {nama}, minggu ini MUFIT Indonesia mengadakan webinar online tentang program wellness karyawan. Kami ingin mengundang tim {perusahaan} untuk ikut. Boleh saya kirimkan detail jadwal dan link-nya, {sapaan}?'},
  {k:'sponsor',n:'Sponsorship/Activation',t:'Halo {sapaan} {nama}, saya {saya} dari MUFIT Indonesia. Kami punya program activation bersama komunitas gaya hidup sehat (offline & digital) yang bisa memberi brand {perusahaan} eksposur langsung ke audiens aktif dan sadar kesehatan. Boleh saya kirimkan deck kolaborasinya, {sapaan}?'}];
 
-const S={bossTasks:new Map(),names:{},role:'?',user:null,me_id:'',tasks:new Map(),targets:null,tgtOpen:false,reach:new Map(),rf:{wk:0,st:'',q:'',add:false,cid:'',del:''},daily:new Map(),leads:new Map(),calls:new Map(),db:null,dl:null,loadedL:false,loadedC:false,open:null,
+const S={bossTasks:new Map(),names:{},role:'?',user:null,me_id:'',tasks:new Map(),targets:null,fuReset:'',rstArm:false,tgtOpen:false,reach:new Map(),rf:{wk:0,st:'',q:'',add:false,cid:'',del:''},daily:new Map(),leads:new Map(),calls:new Map(),db:null,dl:null,loadedL:false,loadedC:false,open:null,
   f:{q:'',stage:'',type:'',source:'',temp:'',nofu:false,sort:'row',dir:-1},pf:{q:'',type:''},cf:{q:'',kind:'',status:''},me:''};
 try{S.me=localStorage.getItem('me')||''}catch(e){}
 const $=(s,r=document)=>r.querySelector(s);
@@ -243,8 +245,16 @@ const addDays=(n)=>{const d=new Date();d.setDate(d.getDate()+n);return d.getFull
 const BULAN=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
 const fmt=s=>{if(!s)return '';const [y,m,d]=s.split('-');return +d+' '+BULAN[+m-1]+(y!==String(new Date().getFullYear())?' '+y.slice(2):'')};
 function toast(t){const el=document.createElement('div');el.className='toast';el.textContent=t;document.body.appendChild(el);setTimeout(()=>el.remove(),2200)}
-function fuState(l){if(!l.nextFu||!ACTIVE.concat(['hold']).includes(l.stage))return '';const t=todayStr();if(l.nextFu<t)return 'late';if(l.nextFu===t)return 'due';if(l.nextFu<=addDays(3))return 'soon';return ''}
-function fuChip(l){const s=fuState(l);if(!l.nextFu)return '';const cls=s==='late'?'late':s==='due'?'today':'';return `<span class="chip ${cls}">FU ${s==='due'?'hari ini':esc(fmt(l.nextFu))}</span>`}
+/* Follow-up: semua lead aktif yang belum di-FU sejak reset muncul di Hari ini; setelah 'Sudah FU' terjadwal ulang (warm/hot 1 minggu, cold 2 minggu / 1 bulan) */
+const FU_STAGES=ACTIVE.concat(['hold']);
+function fuDone(l){return !!l.lastFu&&l.lastFu>=(S.fuReset||'')}
+function needFu(l){if(!l.active||!FU_STAGES.includes(l.stage))return false;return !fuDone(l)||(!!l.nextFu&&l.nextFu<=todayStr())}
+function fuWarm(l){return l.temp==='Hot'||['warm','ajak','meeting','quotation'].includes(l.stage)}
+function fuOpts(l){return fuWarm(l)?[[7,'1 minggu']]:[[14,'2 minggu'],[30,'1 bulan']]}
+function fuState(l){if(!l.active||!FU_STAGES.includes(l.stage))return '';if(!fuDone(l))return 'new';const t=todayStr();if(!l.nextFu)return '';if(l.nextFu<t)return 'late';if(l.nextFu===t)return 'due';return ''}
+function fuChip(l){const s=fuState(l);if(s==='new')return '<span class="chip today">Belum di-FU</span>';if(!l.nextFu)return '';const cls=s==='late'?'late':s==='due'?'today':'';return `<span class="chip ${cls}">${s==='late'?'Terlambat · ':''}FU ${s==='due'?'hari ini':esc(fmt(l.nextFu))}</span>`}
+async function markFu(id,days){const l=S.leads.get(id);if(!l)return;const t=todayStr(),nx=addDays(days);await patchLead(id,{lastFu:t,lastContact:t,nextFu:nx,history:[...(l.history||[]),{d:t,t:'Sudah di-follow up. FU berikutnya '+fmt(nx)}]});toast('Tercatat. FU berikutnya '+fmt(nx))}
+async function resetFu(){const t=todayStr();S.fuReset=t;S.rstArm=false;render();try{await S.db.doc('settings/fuReset').set({date:t});toast('Jadwal FU di-reset. Semua lead aktif muncul di Hari ini')}catch(e){toast('Gagal reset')}}
 function tempChip(t){return t?`<span class="chip ${t.toLowerCase()}">${esc(t)}</span>`:''}
 function stChip(k){const s=SMAP[k]||SMAP.warm;return `<span class="st"><i style="background:${s.c}"></i>${esc(s.n)}</span>`}
 function waNum(p){let d=String(p||'').split('/')[0].replace(/[^0-9+]/g,'');if(d.startsWith('+'))d=d.slice(1);if(d.startsWith('0'))d='62'+d.slice(1);return d.length>=10&&d.startsWith('628')?d:''}
@@ -273,7 +283,7 @@ async function boot(){
   db.collection('reach').onSnapshot(snap=>{S.reach=mergePend('reach',new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}])));if(['reach-out','dashboard','hari-ini','tugas-atasan','ringkasan'].includes(view()))render();else counts()},()=>{});
   db.collection('bossTasks').onSnapshot(snap=>{S.bossTasks=new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));render()},()=>{});
   db.collection('tasks').onSnapshot(snap=>{S.tasks=new Map(snap.docs.map(d=>[d.id,d.data()]));if(['hari-ini','tugas-atasan'].includes(view()))render()},()=>{});
-  db.collection('settings').onSnapshot(snap=>{const d=snap.docs.find(x=>x.id==='targets');S.targets=d?d.data():null;if(view()==='hari-ini')render()},()=>{});
+  db.collection('settings').onSnapshot(snap=>{const d=snap.docs.find(x=>x.id==='targets');S.targets=d?d.data():null;const r=snap.docs.find(x=>x.id==='fuReset');S.fuReset=r?(r.data().date||''):'';render()},()=>{});
   db.collection('daily').onSnapshot(snap=>{S.daily=new Map(snap.docs.map(d=>[d.id,d.data()]));if(['hari-ini','dashboard','tugas-atasan','ringkasan'].includes(view()))render()},()=>{});
   try{S.dl=await window.claude.use('downloads')}catch(e){}
   try{S.sample=await window.claude.use('sample')}catch(e){}
@@ -294,7 +304,7 @@ async function saveCall(c){if(!S.db)return;const {id,...b}=c;try{await S.db.doc(
 const VIEWS=['hari-ini','pipeline','reach-out','leads','dashboard'];
 const view=()=>{const h=location.hash.slice(1);if(S.role==='boss')return BOSS_VIEWS.includes(h)?h:'tugas-atasan';return VIEWS.includes(h)?h:'hari-ini'};
 addEventListener('hashchange',render);
-function counts(){const all=[...S.leads.values()];const due=all.filter(l=>l.active&&['late','due'].includes(fuState(l))).length;
+function counts(){const all=[...S.leads.values()];const due=all.filter(l=>needFu(l)).length;
   $('#cAll').textContent=all.filter(inDb).length;$('#cReach').textContent=weekStats(weekDays(0)).total;$('#cAct').textContent=all.filter(l=>l.active).length;const c=$('#cDue');c.textContent=due;c.classList.toggle('red',due>0)}
 function render(){
   const v=view();
@@ -397,35 +407,36 @@ function vBossDash(el){
 
 async function exportAllData(){if(!S.dl){toast('Download tidak tersedia di tampilan ini');return}
   const m=x=>[...x.entries()].map(([id,v])=>{const {id:_,...d}=v||{};return {id,data:d}});
-  const out={mufitExport:1,at:new Date().toISOString(),collections:{leads:m(S.leads),reach:m(S.reach),daily:m(S.daily),tasks:m(S.tasks),bossTasks:m(S.bossTasks),settings:S.targets?[{id:'targets',data:S.targets}]:[]}};
+  const out={mufitExport:1,at:new Date().toISOString(),collections:{leads:m(S.leads),reach:m(S.reach),daily:m(S.daily),tasks:m(S.tasks),bossTasks:m(S.bossTasks),settings:[...(S.targets?[{id:'targets',data:S.targets}]:[]),...(S.fuReset?[{id:'fuReset',data:{date:S.fuReset}}]:[])]}};
   const n=Object.values(out.collections).reduce((a,b)=>a+b.length,0);
   try{await S.dl.save({filename:'mufit-sales-desk-data-'+todayStr()+'.json',data:new Blob([JSON.stringify(out)],{type:'application/json'})});toast(n+' data diekspor')}catch(e){toast('Ekspor dibatalkan')}}
 
 /* ---------- Hari ini ---------- */
 function vToday(el){
   const every=[...S.leads.values()];const all=every.filter(l=>l.active);const t=todayStr(),s3=addDays(3);
-  const fuable=l=>!['deal','lost'].includes(l.stage)&&l.nextFu;
-  const late=all.filter(l=>fuable(l)&&l.nextFu<t).sort((a,b)=>a.nextFu.localeCompare(b.nextFu));
-  const due=all.filter(l=>fuable(l)&&l.nextFu===t);
-  const soon=all.filter(l=>fuable(l)&&l.nextFu>t&&l.nextFu<=s3).sort((a,b)=>a.nextFu.localeCompare(b.nextFu));
-  const unsched=all.filter(l=>['ajak','meeting','quotation'].includes(l.stage)&&!l.nextFu);
+  const need=all.filter(needFu);
+  const late=need.filter(l=>fuState(l)==='late').sort((a,b)=>a.nextFu.localeCompare(b.nextFu));
+  const SO=['quotation','meeting','ajak','warm','hold','cold'];
+  const due=need.filter(l=>fuState(l)!=='late').sort((a,b)=>(a.temp==='Hot'?0:1)-(b.temp==='Hot'?0:1)||SO.indexOf(a.stage)-SO.indexOf(b.stage)||(a.name||a.company||'').localeCompare(b.name||b.company||''));
+  const ontrack=all.filter(l=>FU_STAGES.includes(l.stage)&&!needFu(l));
   const hot=all.filter(l=>l.temp==='Hot'&&!['deal','lost'].includes(l.stage));
   const h=new Date();const hari=['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'][h.getDay()];
   el.innerHTML=`<div class="head"><div><h1>${hari}, ${fmt(t)}</h1><p class="sub">Ikuti urutan tugas di bawah: isi pipeline dulu (connect & reach out), lalu dorong lead yang sudah ada ke meeting dan deal.</p></div><div class="spacer"></div>
    <div class="tools"><label class="f" style="flex-direction:row;align-items:center;gap:6px">Nama kamu <input type="text" id="meName" value="${esc(S.me)}" placeholder="untuk template" style="width:140px"></label></div></div>
   <div class="tiles">
-   <div class="tile ${late.length?'alert':''}"><b>${late.length}</b><span>Terlambat</span></div>
-   <div class="tile"><b>${due.length}</b><span>Jatuh tempo hari ini</span></div>
-   <div class="tile"><b>${soon.length}</b><span>3 hari ke depan</span></div>
-   <div class="tile"><b>${unsched.length}</b><span>Meeting & quotation tanpa jadwal FU</span></div>
+   <div class="tile"><b>${need.length}</b><span>Perlu di-FU hari ini</span></div>
+   <div class="tile ${late.length?'alert':''}"><b>${late.length}</b><span>Terlambat dari jadwal</span></div>
+   <div class="tile"><b>${ontrack.length}</b><span>Sudah di-FU, sesuai jadwal</span></div>
    <div class="tile"><b>${hot.length}</b><span>Prospek hot</span></div>
   </div>
   ${ownerBossPanel()}${planHtml(all,t)}
   <section class="sec" style="margin-bottom:20px"><h2>Aktivitas LinkedIn hari ini</h2>
    <div class="li-act">${[['connect','Connect dikirim'],['reach','Reach out dikirim']].map(([k,n])=>`<div class="ctr"><span>${n}</span><div class="quick"><button class="btn sm" data-d="${k}" data-v="-1" aria-label="Kurangi">−</button><b>${(S.daily.get(t)||{})[k]||0}</b><button class="btn sm" data-d="${k}" data-v="1" aria-label="Tambah 1">+1</button><button class="btn sm" data-d="${k}" data-v="10">+10</button></div></div>`).join('')}
    <div class="ctr"><span>Yang membalas hari ini</span><div class="quick"><b>${[...S.reach.values()].filter(r=>isReply(r)&&r.replyDate===t).length+every.filter(l=>l.source==='LinkedIn'&&!['List LinkedIn (cold)','Reach out'].includes(l.origin)&&l.createdAt===t).length}</b><button class="btn sm primary" id="addCold">Tempel hasil Claude</button></div></div></div></section>
-  ${grp('Terlambat',late,'late')}${grp('Hari ini',due,'due')}${grp('3 hari ke depan',soon,'soon')}
-  ${!late.length&&!due.length&&!soon.length?'<div class="empty">Tidak ada follow-up terjadwal di list aktif. Buka <b>List follow-up</b> dan isi tanggal FU.</div>':''}`;
+  <div class="fu-help"><p class="sub" style="margin:0">Semua lead di List follow-up yang belum di-FU muncul di sini. Klik <b>Sudah FU</b> setelah kamu follow up: Warm/Hot dijadwalkan lagi 1 minggu, LinkedIn (cold) pilih 2 minggu atau 1 bulan. Lead baru muncul lagi di sini saat jadwalnya tiba.</p>${S.role==='owner'?`<button class="btn sm ${S.rstArm?'primary':'ghost'}" id="fuReset">${S.rstArm?'Yakin? Klik lagi untuk reset':'Reset jadwal FU'}</button>`:''}</div>
+  ${grp('Terlambat dari jadwal',late,'late')}${grp('Perlu di-FU',due,'due')}
+  ${!need.length?'<div class="empty">Semua lead sudah di-follow up sesuai jadwal. 🎉</div>':''}`;
+  if($('#fuReset'))$('#fuReset').onclick=()=>{if(S.rstArm)resetFu();else{S.rstArm=true;render();setTimeout(()=>{if(S.rstArm){S.rstArm=false;render()}},5000)}};
   bindRows(el);bindPlan(el);bindBossRows(el);
   el.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>bumpDaily(b.dataset.d,+b.dataset.v));
   $('#addCold').onclick=openImport;
@@ -436,15 +447,15 @@ function rowHtml(l,cls){const wa=waNum(l.phone);
   return `<div class="row ${cls}" data-id="${esc(l.id)}" tabindex="0">
    <div class="who"><b>${esc((l.sapaan?l.sapaan+' ':'')+l.name)}</b><small>${esc(l.company||'Perusahaan belum diisi')}${l.title?' · '+esc(l.title):''}</small></div>
    <div class="what"><div>${stChip(l.stage)} ${tempChip(l.temp)} ${fuChip(l)}</div><small>${esc(l.nextAction||'Belum ada next action')}</small></div>
-   <div class="act">${wa?`<a class="btn sm" href="https://wa.me/${wa}" target="_blank" rel="noopener" data-stop>WA</a>`:''}${l.active?`<button class="btn sm" data-snooze="${esc(l.id)}">+3 hari</button>${NEXT[l.stage]?`<button class="btn sm" data-next="${esc(l.id)}" title="Pindah ke list berikutnya">→ ${esc(SMAP[NEXT[l.stage]].short)}</button>`:''}`:`<button class="btn sm" data-activate="${esc(l.id)}" title="Masukkan ke list follow-up aktif">Mulai follow-up</button>`}<button class="btn sm primary" data-open>Buka</button></div></div>`}
+   <div class="act">${wa?`<a class="btn sm" href="https://wa.me/${wa}" target="_blank" rel="noopener" data-stop>WA</a>`:''}${l.active?`${FU_STAGES.includes(l.stage)?fuOpts(l).map(([d,n],i)=>`<button class="btn sm ${i?'':'ok'}" data-fu-done="${esc(l.id)}" data-days="${d}" title="Tandai sudah di-follow up, jadwalkan lagi ${n}">✓ Sudah FU · ${n}</button>`).join(''):''}${NEXT[l.stage]?`<button class="btn sm" data-next="${esc(l.id)}" title="Pindah ke list berikutnya">→ ${esc(SMAP[NEXT[l.stage]].short)}</button>`:''}`:`<button class="btn sm" data-activate="${esc(l.id)}" title="Masukkan ke list follow-up aktif">Mulai follow-up</button>`}<button class="btn sm primary" data-open>Buka</button></div></div>`}
 function bindRows(el){
-  el.querySelectorAll('[data-id]').forEach(r=>{r.onclick=e=>{if(e.target.closest('[data-stop],[data-snooze],[data-next],[data-activate]'))return;openLead(r.dataset.id)};r.onkeydown=e=>{if(e.key==='Enter')openLead(r.dataset.id)}});
+  el.querySelectorAll('[data-id]').forEach(r=>{r.onclick=e=>{if(e.target.closest('[data-stop],[data-fu-done],[data-next],[data-activate]'))return;openLead(r.dataset.id)};r.onkeydown=e=>{if(e.key==='Enter')openLead(r.dataset.id)}});
   el.querySelectorAll('[data-next]').forEach(b=>b.onclick=e=>{e.stopPropagation();const l=S.leads.get(b.dataset.next);if(!l)return;
     if(l.stage==='cold'){openLead(l.id);const d=S.open.draft;d.history=[...(d.history||[]),{d:todayStr(),t:'Pindah list: LinkedIn (cold) → Warm (ada no/email)'}];d.stage='warm';d.nextAction=NEXT_ACTION.warm;d.nextFu=addDays(1);S.open.dirty=true;S.open.needContact=true;drawLead();setTimeout(()=>{const f=$('#f-phone');if(f){f.scrollIntoView({block:'center'});f.focus()}},50);return}
     moveStage(l.id,NEXT[l.stage])});
   el.querySelectorAll('[data-activate]').forEach(b=>b.onclick=e=>{e.stopPropagation();const l=S.leads.get(b.dataset.activate);if(!l)return;
     patchLead(l.id,{active:true,nextFu:l.nextFu&&l.nextFu>=todayStr()?l.nextFu:addDays(1),history:[...(l.history||[]),{d:todayStr(),t:'Mulai di-follow up (masuk list aktif)'}]}).then(()=>toast('Masuk list '+(SMAP[l.stage]?.n||'')+' aktif'))});
-  el.querySelectorAll('[data-snooze]').forEach(b=>b.onclick=e=>{e.stopPropagation();patchLead(b.dataset.snooze,{nextFu:addDays(3)}).then(()=>toast('Dijadwalkan ulang +3 hari'))});
+  el.querySelectorAll('[data-fu-done]').forEach(b=>b.onclick=e=>{e.stopPropagation();b.disabled=true;markFu(b.dataset.fuDone,+b.dataset.days)});
 }
 
 /* ---------- List follow-up ---------- */
@@ -619,7 +630,7 @@ function drawLead(){
   $('#cpMsg').onclick=()=>copy($('#msg').textContent);
   if($('#cpMail'))$('#cpMail').onclick=()=>copy(l.email);
   const logAct=t=>{l.history=[...(l.history||[]),{d:todayStr(),t}];l.lastContact=todayStr();markDirty();save()};
-  $('#logMsg').onclick=()=>{if(!l.nextFu||l.nextFu<=todayStr())l.nextFu=addDays(3);logAct('Kirim pesan: '+tpl.n)};
+  $('#logMsg').onclick=()=>{if(!l.nextFu||l.nextFu<=todayStr())l.nextFu=addDays(fuOpts(l)[0][0]);l.lastFu=todayStr();logAct('Kirim pesan: '+tpl.n)};
   $('#actAdd').onclick=()=>{const t=$('#actTxt').value.trim();if(t)logAct(t)};
   $('#actTxt').onkeydown=e=>{if(e.key==='Enter'){const t=e.target.value.trim();if(t)logAct(t)}};
   const save=async()=>{if(!l.name&&!l.company){toast('Isi nama PIC atau perusahaan dulu');return}
@@ -860,7 +871,7 @@ function planHtml(act,t){
   const T=tgt(),d=S.daily.get(t)||{},done=(S.tasks.get(t)||{}).done||{};
   const reachToday=[...S.reach.values()].filter(r=>r.date===t&&!r.untracked).length;const reachN=Math.max(reachToday,d.reach||0);
   const repToday=[...S.reach.values()].filter(r=>isReply(r)&&r.replyDate===t).length;
-  const dueBy=s=>act.filter(l=>l.stage===s&&l.nextFu&&l.nextFu<=t).sort((a,b)=>a.nextFu.localeCompare(b.nextFu));
+  const dueBy=s=>act.filter(l=>l.stage===s&&needFu(l)).sort((a,b)=>(a.nextFu||'').localeCompare(b.nextFu||''));
   const wk=weekOf(t),mo=t.slice(0,8)+'01';
   const meetW=histCount(/→ Habis meeting/,wk[0],wk[6]),dealM=histCount(/→ Deal/,mo,t);
   const reachW=[...S.reach.values()].filter(r=>wk.includes(r.date)&&!r.untracked).length;
@@ -887,7 +898,7 @@ function planHtml(act,t){
    <ol class="tasks">${tasks.map(x=>`<li class="${isDone(x)?'done':''}"><label class="tk"><input type="checkbox" data-task="${x.k}" ${isDone(x)?'checked':''} ${x.p&&x.p[0]>=x.p[1]?'disabled':''}><span><b>${esc(x.n)}${x.L?` <span class="count">${x.L.length}</span>`:''}</b><small>${esc(x.why)}</small></span></label>
      ${x.p?`<div class="tp"><span>${x.p[0]}/${x.p[1]}</span>${bar(x.p[0],x.p[1])}${x.k==='connect'?'<button class="btn sm" data-d="connect" data-v="1">+1</button><button class="btn sm" data-d="connect" data-v="10">+10</button>':''}</div>`:''}
      ${x.btn?`<button class="btn sm primary" id="${x.btn[0]}">${x.btn[1]}</button>`:''}
-     ${x.L?`<div class="tl">${x.L.slice(0,6).map(l=>`<button class="tlead" data-open-lead="${esc(l.id)}">${esc(l.name||l.company)}${l.company&&l.name?' · '+esc(l.company):''}${l.nextFu<t?' <em>terlambat</em>':''}</button>`).join('')}${x.L.length>6?`<span class="sub" style="margin:0;font-size:12px">+${x.L.length-6} lagi di bawah</span>`:''}</div>`:''}</li>`).join('')}</ol>
+     ${x.L?`<div class="tl">${x.L.slice(0,6).map(l=>`<button class="tlead" data-open-lead="${esc(l.id)}">${esc(l.name||l.company)}${l.company&&l.name?' · '+esc(l.company):''}${fuState(l)==='late'?' <em>terlambat</em>':''}</button>`).join('')}${x.L.length>6?`<span class="sub" style="margin:0;font-size:12px">+${x.L.length-6} lagi di bawah</span>`:''}</div>`:''}</li>`).join('')}</ol>
   </section>`}
 function bindPlan(el){
   el.querySelectorAll('[data-task]').forEach(c=>c.onchange=()=>toggleTask(c.dataset.task,c.checked));
