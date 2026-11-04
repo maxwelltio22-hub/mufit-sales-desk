@@ -19,7 +19,7 @@
       <p class="lg-err" role="alert">${msg||''}</p>
       <button class="btn primary" type="submit">Masuk</button></form>`;
     el.querySelector('form').onsubmit=async e=>{e.preventDefault();const f=e.target;const btn=f.querySelector('button');btn.disabled=true;btn.textContent='Memeriksa…';
-      const u=f.u.value.trim().toLowerCase();const email=u.includes('@')?u:u+'@'+DOMAIN;
+      const u=f.u.value.trim().toLowerCase();let email=u.includes('@')?u:'';if(!email){try{const {data}=await sb.rpc('login_email',{u});email=data||''}catch(e){}if(!email)email=u+'@'+DOMAIN}
       const {error}=await sb.auth.signInWithPassword({email,password:f.p.value});
       if(error){btn.disabled=false;btn.textContent='Masuk';f.querySelector('.lg-err').textContent='Username atau password salah.';return}
       location.reload()}}
