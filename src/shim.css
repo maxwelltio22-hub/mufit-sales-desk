@@ -1,0 +1,8 @@
+html.locked header,html.locked main,html.locked #drawerHost,html.locked .pvbar{display:none!important}
+#loginGate{display:none}html.locked #loginGate{display:grid;place-items:center;min-height:100vh;padding:16px}
+.lg-card{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:12px}
+.lg-brand{display:flex;align-items:center;gap:10px;font-family:var(--display);font-size:22px;text-transform:uppercase}.lg-brand .logo{width:48px}
+.lg-sub{margin:0;color:var(--muted);font-size:13px}.lg-card label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:var(--muted)}
+.lg-card input{font:inherit;font-size:15px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg)}
+.lg-err{margin:0;min-height:1em;color:var(--bad);font-size:13px}.lg-card .btn{justify-content:center;padding:10px}
+#logoutBtn{white-space:nowrap}
