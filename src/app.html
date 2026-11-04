@@ -93,6 +93,7 @@ button.tile:hover{border-color:var(--accent)}
 .row .who b{display:block}
 .row .who small,.row .what small{color:var(--muted);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .act{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.btn.danger{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
 .btn.ok{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 .fu-help{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:4px 0 12px;flex-wrap:wrap}.fu-help .sub{flex:1;min-width:240px}
 @media (max-width:640px){.row{grid-template-columns:1fr;gap:6px}.row .act{justify-content:flex-start}}
@@ -235,7 +236,7 @@ const TEMPLATES=[
  {k:'webinar',n:'Undangan webinar',t:'Selamat {waktu} {sapaan} {nama}, minggu ini MUFIT Indonesia mengadakan webinar online tentang program wellness karyawan. Kami ingin mengundang tim {perusahaan} untuk ikut. Boleh saya kirimkan detail jadwal dan link-nya, {sapaan}?'},
  {k:'sponsor',n:'Sponsorship/Activation',t:'Halo {sapaan} {nama}, saya {saya} dari MUFIT Indonesia. Kami punya program activation bersama komunitas gaya hidup sehat (offline & digital) yang bisa memberi brand {perusahaan} eksposur langsung ke audiens aktif dan sadar kesehatan. Boleh saya kirimkan deck kolaborasinya, {sapaan}?'}];
 
-const S={bossTasks:new Map(),names:{},role:'?',user:null,me_id:'',tasks:new Map(),targets:null,fuReset:'',rstArm:false,tgtOpen:false,reach:new Map(),rf:{wk:0,st:'',q:'',add:false,cid:'',del:''},daily:new Map(),leads:new Map(),calls:new Map(),db:null,dl:null,loadedL:false,loadedC:false,open:null,
+const S={bossTasks:new Map(),names:{},role:'?',user:null,me_id:'',tasks:new Map(),targets:null,fuReset:'',rstArm:false,lostArm:'',tgtOpen:false,reach:new Map(),rf:{wk:0,st:'',q:'',add:false,cid:'',del:''},daily:new Map(),leads:new Map(),calls:new Map(),db:null,dl:null,loadedL:false,loadedC:false,open:null,
   f:{q:'',stage:'',type:'',source:'',temp:'',nofu:false,sort:'row',dir:-1},pf:{q:'',type:''},cf:{q:'',kind:'',status:''},me:''};
 try{S.me=localStorage.getItem('me')||''}catch(e){}
 const $=(s,r=document)=>r.querySelector(s);
@@ -250,7 +251,7 @@ const FU_STAGES=ACTIVE.concat(['hold']);
 function fuDone(l){return !!l.lastFu&&l.lastFu>=(S.fuReset||'')}
 function needFu(l){if(!l.active||!FU_STAGES.includes(l.stage))return false;return !fuDone(l)||(!!l.nextFu&&l.nextFu<=todayStr())}
 function fuWarm(l){return l.temp==='Hot'||['warm','ajak','meeting','quotation'].includes(l.stage)}
-function fuOpts(l){return fuWarm(l)?[[7,'1 minggu']]:[[14,'2 minggu'],[30,'1 bulan']]}
+function fuOpts(l){return fuWarm(l)?[[7,'1 minggu'],[14,'2 minggu']]:[[14,'2 minggu'],[30,'1 bulan']]}
 function fuState(l){if(!l.active||!FU_STAGES.includes(l.stage))return '';if(!fuDone(l))return 'new';const t=todayStr();if(!l.nextFu)return '';if(l.nextFu<t)return 'late';if(l.nextFu===t)return 'due';return ''}
 function fuChip(l){const s=fuState(l);if(s==='new')return '<span class="chip today">Belum di-FU</span>';if(!l.nextFu)return '';const cls=s==='late'?'late':s==='due'?'today':'';return `<span class="chip ${cls}">${s==='late'?'Terlambat · ':''}FU ${s==='due'?'hari ini':esc(fmt(l.nextFu))}</span>`}
 async function markFu(id,days){const l=S.leads.get(id);if(!l)return;const t=todayStr(),nx=addDays(days);await patchLead(id,{lastFu:t,lastContact:t,nextFu:nx,history:[...(l.history||[]),{d:t,t:'Sudah di-follow up. FU berikutnya '+fmt(nx)}]});toast('Tercatat. FU berikutnya '+fmt(nx))}
@@ -447,14 +448,17 @@ function rowHtml(l,cls){const wa=waNum(l.phone);
   return `<div class="row ${cls}" data-id="${esc(l.id)}" tabindex="0">
    <div class="who"><b>${esc((l.sapaan?l.sapaan+' ':'')+l.name)}</b><small>${esc(l.company||'Perusahaan belum diisi')}${l.title?' · '+esc(l.title):''}</small></div>
    <div class="what"><div>${stChip(l.stage)} ${tempChip(l.temp)} ${fuChip(l)}</div><small>${esc(l.nextAction||'Belum ada next action')}</small></div>
-   <div class="act">${wa?`<a class="btn sm" href="https://wa.me/${wa}" target="_blank" rel="noopener" data-stop>WA</a>`:''}${l.active?`${FU_STAGES.includes(l.stage)?fuOpts(l).map(([d,n],i)=>`<button class="btn sm ${i?'':'ok'}" data-fu-done="${esc(l.id)}" data-days="${d}" title="Tandai sudah di-follow up, jadwalkan lagi ${n}">✓ Sudah FU · ${n}</button>`).join(''):''}${NEXT[l.stage]?`<button class="btn sm" data-next="${esc(l.id)}" title="Pindah ke list berikutnya">→ ${esc(SMAP[NEXT[l.stage]].short)}</button>`:''}`:`<button class="btn sm" data-activate="${esc(l.id)}" title="Masukkan ke list follow-up aktif">Mulai follow-up</button>`}<button class="btn sm primary" data-open>Buka</button></div></div>`}
+   <div class="act">${wa?`<a class="btn sm" href="https://wa.me/${wa}" target="_blank" rel="noopener" data-stop>WA</a>`:''}${l.active?`${FU_STAGES.includes(l.stage)?fuOpts(l).map(([d,n],i)=>`<button class="btn sm ${i?'':'ok'}" data-fu-done="${esc(l.id)}" data-days="${d}" title="Tandai sudah di-follow up, jadwalkan lagi ${n}">✓ Sudah FU · ${n}</button>`).join(''):''}${l.stage==='lost'?`<button class="btn sm" data-todb="${esc(l.id)}" title="Keluarkan dari List follow-up, tetap tersimpan di Database">→ Database</button>`:''}${NEXT[l.stage]?`<button class="btn sm" data-next="${esc(l.id)}" title="Pindah ke list berikutnya">→ ${esc(SMAP[NEXT[l.stage]].short)}</button>`:''}`:`<button class="btn sm" data-activate="${esc(l.id)}" title="Masukkan ke list follow-up aktif">Mulai follow-up</button>`}${l.active&&FU_STAGES.includes(l.stage)?`<button class="btn sm ghost ${S.lostArm===l.id?'danger':''}" data-lost="${esc(l.id)}" title="Tandai lost: keluar dari List follow-up, pindah ke Database">${S.lostArm===l.id?'Yakin lost?':'Lost'}</button>`:''}<button class="btn sm primary" data-open>Buka</button></div></div>`}
 function bindRows(el){
-  el.querySelectorAll('[data-id]').forEach(r=>{r.onclick=e=>{if(e.target.closest('[data-stop],[data-fu-done],[data-next],[data-activate]'))return;openLead(r.dataset.id)};r.onkeydown=e=>{if(e.key==='Enter')openLead(r.dataset.id)}});
+  el.querySelectorAll('[data-id]').forEach(r=>{r.onclick=e=>{if(e.target.closest('[data-stop],[data-fu-done],[data-next],[data-activate],[data-lost],[data-todb]'))return;openLead(r.dataset.id)};r.onkeydown=e=>{if(e.key==='Enter')openLead(r.dataset.id)}});
   el.querySelectorAll('[data-next]').forEach(b=>b.onclick=e=>{e.stopPropagation();const l=S.leads.get(b.dataset.next);if(!l)return;
     if(l.stage==='cold'){openLead(l.id);const d=S.open.draft;d.history=[...(d.history||[]),{d:todayStr(),t:'Pindah list: LinkedIn (cold) → Warm (ada no/email)'}];d.stage='warm';d.nextAction=NEXT_ACTION.warm;d.nextFu=addDays(1);S.open.dirty=true;S.open.needContact=true;drawLead();setTimeout(()=>{const f=$('#f-phone');if(f){f.scrollIntoView({block:'center'});f.focus()}},50);return}
     moveStage(l.id,NEXT[l.stage])});
   el.querySelectorAll('[data-activate]').forEach(b=>b.onclick=e=>{e.stopPropagation();const l=S.leads.get(b.dataset.activate);if(!l)return;
     patchLead(l.id,{active:true,nextFu:l.nextFu&&l.nextFu>=todayStr()?l.nextFu:addDays(1),history:[...(l.history||[]),{d:todayStr(),t:'Mulai di-follow up (masuk list aktif)'}]}).then(()=>toast('Masuk list '+(SMAP[l.stage]?.n||'')+' aktif'))});
+  el.querySelectorAll('[data-lost]').forEach(b=>b.onclick=e=>{e.stopPropagation();const id=b.dataset.lost;if(S.lostArm!==id){S.lostArm=id;render();setTimeout(()=>{if(S.lostArm===id){S.lostArm='';render()}},5000);return}
+    S.lostArm='';const l=S.leads.get(id);if(!l)return;patchLead(id,{stage:'lost',active:false,nextFu:'',history:[...(l.history||[]),{d:todayStr(),t:'Lost: '+(SMAP[l.stage]?.n||'')+' → Database (keluar dari List follow-up)'}]}).then(()=>toast((l.name||l.company)+' lost, dipindah ke Database'))});
+  el.querySelectorAll('[data-todb]').forEach(b=>b.onclick=e=>{e.stopPropagation();const l=S.leads.get(b.dataset.todb);if(!l)return;patchLead(l.id,{active:false,history:[...(l.history||[]),{d:todayStr(),t:'Dipindah ke Database (keluar dari List follow-up)'}]}).then(()=>toast('Dipindah ke Database'))});
   el.querySelectorAll('[data-fu-done]').forEach(b=>b.onclick=e=>{e.stopPropagation();b.disabled=true;markFu(b.dataset.fuDone,+b.dataset.days)});
 }
 
