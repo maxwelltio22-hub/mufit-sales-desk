@@ -32,7 +32,19 @@
     const out=document.createElement('button');out.className='btn sm ghost';out.id='logoutBtn';out.textContent='Keluar ('+(p.name||p.username)+')';
     out.onclick=async()=>{await sb.auth.signOut();location.reload()};
     const bar=document.querySelector('header .bar');if(bar)bar.appendChild(out);
+    if(p.role==='owner'&&bar){const ib=document.createElement('button');ib.className='btn sm ghost';ib.id='importBtn';ib.textContent='Impor data lama';ib.onclick=importOld;bar.insertBefore(ib,out)}
     readyRes()}
+
+  /* ---------- Impor data dari Sales Desk lama (file JSON hasil "Ekspor semua data") ---------- */
+  function importOld(){const inp=document.createElement('input');inp.type='file';inp.accept='.json,application/json';
+    inp.onchange=async()=>{const f=inp.files[0];if(!f)return;let J;try{J=JSON.parse(await f.text())}catch(e){alert('File tidak terbaca.');return}
+      if(!J||!J.mufitExport||!J.collections){alert('Ini bukan file ekspor MUFIT Sales Desk.');return}
+      const rows=[];Object.entries(J.collections).forEach(([c,arr])=>(arr||[]).forEach(d=>rows.push({collection:c,id:String(d.id),data:d.data||{},updated_at:new Date().toISOString()})));
+      if(!confirm('Masukkan '+rows.length+' data ke website ini? Data dengan ID yang sama akan ditimpa.'))return;
+      const btn=document.getElementById('importBtn');let done=0;
+      for(let i=0;i<rows.length;i+=200){const {error}=await sb.from('docs').upsert(rows.slice(i,i+200));if(error){alert('Gagal di data ke-'+(i+1)+': '+error.message+'. Coba impor ulang, data yang sudah masuk tidak akan dobel.');return}done+=Math.min(200,rows.length-i);if(btn)btn.textContent='Mengimpor '+done+'/'+rows.length}
+      alert(done+' data berhasil dimasukkan.');location.reload()};
+    inp.click()}
 
   /* ---------- Database: koleksi dokumen + realtime ---------- */
   const mkSnap=m=>({docs:[...m.entries()].map(([id,data])=>({id,data:()=>data})),metadata:{fromCache:false}});

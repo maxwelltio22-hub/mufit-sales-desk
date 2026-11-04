@@ -252,7 +252,19 @@ td.det{font-size:12.5px;line-height:1.5;min-width:280px}td.det>div{margin:2px 0}
     const out=document.createElement('button');out.className='btn sm ghost';out.id='logoutBtn';out.textContent='Keluar ('+(p.name||p.username)+')';
     out.onclick=async()=>{await sb.auth.signOut();location.reload()};
     const bar=document.querySelector('header .bar');if(bar)bar.appendChild(out);
+    if(p.role==='owner'&&bar){const ib=document.createElement('button');ib.className='btn sm ghost';ib.id='importBtn';ib.textContent='Impor data lama';ib.onclick=importOld;bar.insertBefore(ib,out)}
     readyRes()}
+
+  /* ---------- Impor data dari Sales Desk lama (file JSON hasil "Ekspor semua data") ---------- */
+  function importOld(){const inp=document.createElement('input');inp.type='file';inp.accept='.json,application/json';
+    inp.onchange=async()=>{const f=inp.files[0];if(!f)return;let J;try{J=JSON.parse(await f.text())}catch(e){alert('File tidak terbaca.');return}
+      if(!J||!J.mufitExport||!J.collections){alert('Ini bukan file ekspor MUFIT Sales Desk.');return}
+      const rows=[];Object.entries(J.collections).forEach(([c,arr])=>(arr||[]).forEach(d=>rows.push({collection:c,id:String(d.id),data:d.data||{},updated_at:new Date().toISOString()})));
+      if(!confirm('Masukkan '+rows.length+' data ke website ini? Data dengan ID yang sama akan ditimpa.'))return;
+      const btn=document.getElementById('importBtn');let done=0;
+      for(let i=0;i<rows.length;i+=200){const {error}=await sb.from('docs').upsert(rows.slice(i,i+200));if(error){alert('Gagal di data ke-'+(i+1)+': '+error.message+'. Coba impor ulang, data yang sudah masuk tidak akan dobel.');return}done+=Math.min(200,rows.length-i);if(btn)btn.textContent='Mengimpor '+done+'/'+rows.length}
+      alert(done+' data berhasil dimasukkan.');location.reload()};
+    inp.click()}
 
   /* ---------- Database: koleksi dokumen + realtime ---------- */
   const mkSnap=m=>({docs:[...m.entries()].map(([id,data])=>({id,data:()=>data})),metadata:{fromCache:false}});
@@ -474,6 +486,12 @@ function vBossDash(el){
   el.querySelectorAll('[data-bm]').forEach(x=>x.onclick=()=>{S.bp={mode:x.dataset.bm,off:0};render()});
   $('#bpPrev').onclick=()=>{f.off--;render()};$('#bpNext').onclick=()=>{if(f.off<0){f.off++;render()}};const nw=$('#bpNow');if(nw)nw.onclick=()=>{f.off=0;render()}}
 
+async function exportAllData(){if(!S.dl){toast('Download tidak tersedia di tampilan ini');return}
+  const m=x=>[...x.entries()].map(([id,v])=>{const {id:_,...d}=v||{};return {id,data:d}});
+  const out={mufitExport:1,at:new Date().toISOString(),collections:{leads:m(S.leads),reach:m(S.reach),daily:m(S.daily),tasks:m(S.tasks),bossTasks:m(S.bossTasks),settings:S.targets?[{id:'targets',data:S.targets}]:[]}};
+  const n=Object.values(out.collections).reduce((a,b)=>a+b.length,0);
+  try{await S.dl.save({filename:'mufit-sales-desk-data-'+todayStr()+'.json',data:new Blob([JSON.stringify(out)],{type:'application/json'})});toast(n+' data diekspor')}catch(e){toast('Ekspor dibatalkan')}}
+
 /* ---------- Hari ini ---------- */
 function vToday(el){
   const every=[...S.leads.values()];const all=every.filter(l=>l.active);const t=todayStr(),s3=addDays(3);
@@ -619,7 +637,7 @@ function vDash(el){
   const replies=d=>repOnDay(d);
   const rep14=days.reduce((a,d)=>a+replies(d),0);
   const dRows=days.slice(-7).map(d=>{const x=S.daily.get(d)||{};return `<tr><td>${esc(fmt(d))}</td><td class="num">${x.connect||0}</td><td class="num">${reachOnDay(d)}</td><td class="num">${replies(d)}</td></tr>`}).join('');
-  el.innerHTML=`<div class="head"><div><h1>Dashboard</h1><p class="sub">Angka di kotak atas hanya list yang sedang kamu follow up. Konversi dan grafik dihitung dari semua ${all.length} lead.</p></div><div class="spacer"></div><div class="tools"><button class="btn primary" id="xl">Download laporan Excel</button></div></div>
+  el.innerHTML=`<div class="head"><div><h1>Dashboard</h1><p class="sub">Angka di kotak atas hanya list yang sedang kamu follow up. Konversi dan grafik dihitung dari semua ${all.length} lead.</p></div><div class="spacer"></div><div class="tools"><button class="btn" id="expAll">Ekspor semua data (pindah website)</button><button class="btn primary" id="xl">Download laporan Excel</button></div></div>
    <div class="tiles">${['cold','warm','ajak','meeting','quotation','deal'].map(k=>`<button class="tile" data-golist="${k}"><b>${all.filter(l=>l.active&&l.stage===k).length}</b><span>${esc(SMAP[k].n)} (aktif)</span></button>`).join('')}<button class="tile" data-golist="db"><b>${all.filter(inDb).length}</b><span>Database</span></button></div>
    <div class="dash">
     <div class="panel" style="grid-column:1/-1"><h2>Konversi antar list</h2><div class="conv">
@@ -636,7 +654,7 @@ function vDash(el){
     <div class="panel"><h2>Channel approach</h2>${barList(group('channels'),'var(--accent)')}</div>
     <div class="panel"><h2>Tipe penjualan</h2>${barList(group('type'),'var(--warn)')}</div>
    </div>`;
-  $('#xl').onclick=e=>exportExcel(e.currentTarget);
+  $('#xl').onclick=e=>exportExcel(e.currentTarget);$('#expAll').onclick=exportAllData;
   el.querySelectorAll('[data-golist]').forEach(b=>b.onclick=()=>{if(b.dataset.golist==='db'){location.hash='leads';return}S.pf.list=b.dataset.golist;location.hash='pipeline'});
 }
 
