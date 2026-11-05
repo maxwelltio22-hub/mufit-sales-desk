@@ -302,6 +302,7 @@ async function boot(){
     S.leads=mergePend('leads',new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}])));S.loadedL=true;
     if(!snap.metadata.fromCache){clearTimeout(timer);setSync('ok','Tersimpan otomatis')}
     render();if(S.open&&S.open.type==='lead'&&!S.open.dirty)refreshDrawer();
+    if(S.role==='owner'&&!snap.metadata.fromCache){clearTimeout(S.awT);S.awT=setTimeout(autoWarm,800)}
   },e=>{clearTimeout(timer);setSync('bad','Gagal memuat data ('+e.code+')');S.loadedL=true;render()});
   db.collection('calls').onSnapshot(snap=>{S.calls=new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));S.loadedC=true;if(view()==='cold-call')render()},()=>{S.loadedC=true});
   db.collection('reach').onSnapshot(snap=>{S.reach=mergePend('reach',new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}])));if(['reach-out','dashboard','hari-ini','tugas-atasan','ringkasan'].includes(view()))render();else counts()},()=>{});
@@ -317,6 +318,7 @@ function mergePend(k,m){PEND[k].forEach((d,id)=>{const sv=m.get(id);if(!sv||(sv.
 async function withRetry(fn){let e;for(const w of [0,1500,4000]){if(w)await new Promise(r=>setTimeout(r,w));try{return await fn()}catch(x){e=x;if(['quota_exceeded','not_granted','permission_denied'].includes(x&&x.code))break}}throw e}
 async function saveLead(l){if(!S.db){toast('Database belum tersambung');return false}
   const {id,...body}=l;body.updatedAt=new Date().toISOString();
+  if(body.stage==='cold'&&(String(body.phone||'').trim()||String(body.email||'').trim())){body.stage='warm';body.active=true;body.nextAction=NEXT_ACTION.warm;if(!body.nextFu||body.nextFu>addDays(1))body.nextFu=addDays(1);body.history=[...(body.history||[]),{d:todayStr(),t:'Ada no/email → otomatis pindah ke Warm'}]}
   try{await withRetry(()=>S.db.doc('leads/'+id).set(body));S.leads.set(id,{id,...body});PEND.leads.set(id,{id,...body});return true}catch(e){S.saveFails=(S.saveFails||0)+1;toast(e.code==='quota_exceeded'?'Database penuh: hapus lead lama dulu':'Gagal menyimpan, coba lagi');return false}}
 async function patchLead(id,patch){const l=S.leads.get(id);if(!l)return;const n={...l,...patch};if(await saveLead(n)){render();if(S.open?.id===id)refreshDrawer()}}
 let dailyBusy=false;
@@ -936,6 +938,10 @@ async function applyBulk(B,sel){let w=0,x=0;const t=todayStr();
   for(const c of B.no){if(!sel.has('n'+c.l.id))continue;const l=S.leads.get(c.l.id);if(!l)continue;
     if(await saveLead({...l,stage:'lost',active:false,nextFu:'',history:[...(l.history||[]),{d:t,t:'Tidak tertarik → Lost, pindah ke Database (cek kontak bulk)'+(c.note?'. '+c.note:'')}]}))x++}
   return {w,x}}
+/* otomatis: lead cold yang sudah punya no/email, atau datanya sudah ada di Database, langsung jadi Warm */
+async function autoWarm(){if(S.awRun||S.role!=='owner'||!S.db)return;const SP=coldSplit();if(!SP.has.length&&!SP.dup.length)return;S.awRun=true;
+  try{const B={con:SP.has.map(l=>({l,phone:l.phone,email:l.email,note:''})),no:[],dup:SP.dup};const sel=new Set([...B.con.map(c=>'c'+c.l.id),...B.dup.map(c=>'d'+c.l.id)]);const r=await applyBulk(B,sel);
+    if(r.w)toast(r.w+' lead cold sudah punya no/email di Database, otomatis jadi Warm');render()}finally{S.awRun=false}}
 function openBulk(){const host=$('#drawerHost');const SP=coldSplit();const pre=()=>({con:SP.has.map(l=>({l,name:l.name,phone:l.phone,email:l.email,note:'Kontak sudah ada di data lead ini',pre:true})),no:[],miss:[],dup:SP.dup.map(x=>({...x}))});let B=pre();const sel=new Set();const preSel=()=>{B.con.forEach(c=>sel.add('c'+c.l.id));B.dup.forEach(c=>sel.add('d'+c.l.id))};preSel();
   host.innerHTML=`<div class="scrim" id="scrim"></div><aside class="drawer" role="dialog" aria-label="Cek kontak bulk"><div class="d-head"><div style="flex:1"><h1>Cek kontak (bulk)</h1><p class="sub">Semua lead LinkedIn (cold) yang sudah kasih no WA / email langsung pindah ke Warm sekaligus.</p></div><button class="btn ghost" id="dClose" aria-label="Tutup">✕</button></div>
    <div class="d-body"><section class="sec"><h2>1. Salin prompt untuk Claude di Chrome</h2><p class="sub" style="font-size:12.5px">Prompt hanya berisi <b>${SP.check.length}</b> lead cold yang belum punya kontak. ${SP.has.length+SP.dup.length?`${SP.has.length+SP.dup.length} lead lain tidak ikut dicek karena datanya sudah ada (lihat di bawah).`:''} Tempel ke Claude di Chrome saat LinkedIn terbuka.</p><div class="quick"><button class="btn sm primary" id="cpFu">Salin prompt</button></div></section>
