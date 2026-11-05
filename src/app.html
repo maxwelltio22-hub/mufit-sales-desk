@@ -94,6 +94,7 @@ button.tile:hover{border-color:var(--accent)}
 .row .who small,.row .what small{color:var(--muted);display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .act{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
 .btn.danger{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
+.chip.prio{background:var(--fg);color:var(--bg)}
 .btn.ok{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 .fu-help{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:4px 0 12px;flex-wrap:wrap}.fu-help .sub{flex:1;min-width:240px}
 @media (max-width:640px){.row{grid-template-columns:minmax(0,1fr);gap:8px;padding:10px 12px}.row .act{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.row .act>*{justify-content:center;text-align:center;padding:8px 4px;white-space:normal;line-height:1.2;min-height:36px}.row .act [data-fu-done]{grid-column:span 2;order:-1}.row .who b{white-space:normal}}
@@ -277,6 +278,22 @@ function fuWarm(l){return l.temp==='Hot'||['warm','ajak','meeting','quotation'].
 function fuOpts(l){return fuWarm(l)?[[7,'1 minggu'],[14,'2 minggu']]:[[14,'2 minggu'],[30,'1 bulan']]}
 function fuState(l){if(!l.active||!FU_STAGES.includes(l.stage))return '';if(!fuDone(l))return 'new';const t=todayStr();if(!l.nextFu)return '';if(l.nextFu<t)return 'late';if(l.nextFu===t)return 'due';return ''}
 function fuChip(l){const s=fuState(l);if(s==='new')return '<span class="chip today">Belum di-FU</span>';if(!l.nextFu)return '';const cls=s==='late'?'late':s==='due'?'today':'';return `<span class="chip ${cls}">${s==='late'?'Terlambat · ':''}FU ${s==='due'?'hari ini':esc(fmt(l.nextFu))}</span>`}
+/* Skor prioritas & deteksi minat (pintar, berbasis aturan, tanpa biaya) */
+const POS_RE=[/tertarik|minat|interested/,/\bboleh\b|silak?h?an|sounds good|oke kirim|ok kirim/,/compro|company profile|proposal|penawaran|quotation|pricelist|harga|budget|biaya/,/jadwal|meeting|call|ngobrol|diskusi|zoom|gmeet|ketemu|presentasi/,/butuh|kebutuhan|need|cari vendor|planning|rencana|program/,/kirim(kan)? (ke|via|lewat)? ?(email|wa)|ini (no|nomor|email)|hubungi saya/];
+const NEG_RE=[/tidak tertarik|(ga|gak|nggak|enggak) tertarik|not interested|kurang tertarik/,/belum (butuh|perlu|ada (planning|kebutuhan|budget|rencana))/,/(tidak|ga|gak) ada budget|no budget/,/sudah (ada|punya) vendor|sudah kerja ?sama/,/menolak|\btolak|jangan (hubungi|kirim)|unsubscribe|stop/];
+const LATER_RE=/januari|februari|desember|\bdes\b|\bjan\b|q1|kuartal|tahun depan|bulan depan|next year|nanti (saja|aja)/;
+const SYS_H=/^(pindah list|masuk list|tahap:|sudah di-follow up|kasih |digabung|kirim pesan:|mulai di-follow|ada no\/email|lost:|dipindah|membalas reach out|balasan linkedin|tidak tertarik → lost)/i;
+function leadText(l){const r=[...S.reach.values()].filter(x=>x.leadId===l.id).map(x=>x.note||'');return [String(l.notes||'').replace(/status lama:[^|]*/ig,''),...(l.history||[]).filter(h=>!SYS_H.test(h.t||'')).slice(-5).map(h=>h.t),...r].join(' \n').toLowerCase()}
+function interestOf(l){const t=leadText(l);let p=0,n=0;POS_RE.forEach(re=>{if(re.test(t))p++});NEG_RE.forEach(re=>{if(re.test(t))n++});return {p,n,later:LATER_RE.test(t)}}
+function prioOf(l){const t=todayStr(),why=[];let s=({quotation:30,meeting:26,ajak:22,warm:16,hold:6,cold:8})[l.stage]||0;
+  if(l.temp==='Hot'){s+=25;why.push('Hot')}else if(l.temp==='Warm')s+=10;else if(l.temp==='Cold')s-=5;
+  const I=interestOf(l);if(I.p&&I.p>=I.n){s+=Math.min(18,I.p*6);why.push('respon tertarik')}if(I.n){s-=Math.min(24,I.n*12);why.push('respon kurang tertarik')}if(I.later){s-=6;why.push('minta dihubungi nanti')}
+  if(l.phone||l.email)s+=6;
+  if(fuState(l)==='late'){const d=Math.round((new Date(t)-new Date(l.nextFu))/864e5);s+=Math.min(20,d*2);why.push('terlambat '+d+' hari')}
+  if(l.lastContact){const d=Math.round((new Date(t)-new Date(l.lastContact))/864e5);if(d>=0&&d<=3){s+=8;why.push('baru ada kontak')}}
+  if(['quotation','meeting'].includes(l.stage))why.push(SMAP[l.stage].n);
+  return {s,why,I}}
+function minatChip(I,l){if(I.n>I.p)return '<span class="chip late" title="Dari isi balasan/catatan">Kurang tertarik</span>';if(I.p>=2||(I.p&&l.temp==='Hot'))return '<span class="chip hot" title="Dari isi balasan/catatan">Tertarik</span>';return ''}
 async function markFu(id,days){const l=S.leads.get(id);if(!l)return;const t=todayStr(),nx=addDays(days);await patchLead(id,{lastFu:t,lastContact:t,nextFu:nx,history:[...(l.history||[]),{d:t,t:'Sudah di-follow up. FU berikutnya '+fmt(nx)}]});toast('Tercatat. FU berikutnya '+fmt(nx))}
 async function resetFu(){const t=todayStr();S.fuReset=t;S.rstArm=false;render();try{await S.db.doc('settings/fuReset').set({date:t});toast('Jadwal FU di-reset. Semua lead aktif muncul di Hari ini')}catch(e){toast('Gagal reset')}}
 function tempChip(t){return t?`<span class="chip ${t.toLowerCase()}">${esc(t)}</span>`:''}
@@ -443,7 +460,9 @@ function vToday(el){
   const need=all.filter(needFu);
   const late=need.filter(l=>fuState(l)==='late').sort((a,b)=>a.nextFu.localeCompare(b.nextFu));
   const SO=['quotation','meeting','ajak','warm','hold','cold'];
-  const due=need.filter(l=>fuState(l)!=='late').sort((a,b)=>(a.temp==='Hot'?0:1)-(b.temp==='Hot'?0:1)||SO.indexOf(a.stage)-SO.indexOf(b.stage)||(a.name||a.company||'').localeCompare(b.name||b.company||''));
+  const PR=new Map(need.map(l=>[l.id,prioOf(l)]));
+  const due=need.filter(l=>fuState(l)!=='late').sort((a,b)=>PR.get(b.id).s-PR.get(a.id).s||SO.indexOf(a.stage)-SO.indexOf(b.stage)||(a.name||a.company||'').localeCompare(b.name||b.company||''));
+  late.sort((a,b)=>PR.get(b.id).s-PR.get(a.id).s);S.prioMap=new Map([...late,...due].map((l,i)=>[l.id,{rank:i+1,...PR.get(l.id)}]));
   const ontrack=all.filter(l=>FU_STAGES.includes(l.stage)&&!needFu(l));
   const hot=all.filter(l=>l.temp==='Hot'&&!['deal','lost'].includes(l.stage));
   const h=new Date();const hari=['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu'][h.getDay()];
@@ -459,8 +478,8 @@ function vToday(el){
   <section class="sec" style="margin-bottom:20px"><h2>Aktivitas LinkedIn hari ini</h2>
    <div class="li-act">${[['connect','Connect dikirim'],['reach','Reach out dikirim']].map(([k,n])=>`<div class="ctr"><span>${n}</span><div class="quick"><button class="btn sm" data-d="${k}" data-v="-1" aria-label="Kurangi">−</button><b>${(S.daily.get(t)||{})[k]||0}</b><button class="btn sm" data-d="${k}" data-v="1" aria-label="Tambah 1">+1</button><button class="btn sm" data-d="${k}" data-v="10">+10</button></div></div>`).join('')}
    <div class="ctr"><span>Yang membalas hari ini</span><div class="quick"><b>${[...S.reach.values()].filter(r=>isReply(r)&&r.replyDate===t).length+every.filter(l=>l.source==='LinkedIn'&&!['List LinkedIn (cold)','Reach out'].includes(l.origin)&&l.createdAt===t).length}</b><button class="btn sm primary" id="addCold">Tempel hasil Claude</button></div></div></div></section>
-  <div class="fu-help"><p class="sub" style="margin:0">Semua lead di List follow-up yang belum di-FU muncul di sini. Klik <b>Sudah FU</b> setelah kamu follow up: Warm/Hot dijadwalkan lagi 1 minggu, LinkedIn (cold) pilih 2 minggu atau 1 bulan. Lead baru muncul lagi di sini saat jadwalnya tiba.</p>${S.role==='owner'?`<button class="btn sm ${S.rstArm?'primary':'ghost'}" id="fuReset">${S.rstArm?'Yakin? Klik lagi untuk reset':'Reset jadwal FU'}</button>`:''}</div>
-  ${grp('Terlambat dari jadwal',late,'late')}${grp('Perlu di-FU',due,'due')}
+  <div class="fu-help"><p class="sub" style="margin:0">Semua lead di List follow-up yang belum di-FU muncul di sini, <b>diurutkan otomatis dari yang paling penting</b> (tahap, Hot, isi balasan yang menunjukkan minat, keterlambatan). Klik <b>Sudah FU</b> setelah kamu follow up: Warm/Hot dijadwalkan lagi 1 minggu, LinkedIn (cold) pilih 2 minggu atau 1 bulan. Lead baru muncul lagi di sini saat jadwalnya tiba.</p>${S.role==='owner'?`<button class="btn sm ${S.rstArm?'primary':'ghost'}" id="fuReset">${S.rstArm?'Yakin? Klik lagi untuk reset':'Reset jadwal FU'}</button>`:''}</div>
+  ${grp('Terlambat dari jadwal',late,'late')}${grp('Perlu di-FU · urut dari yang paling penting',due,'due')}
   ${!need.length?'<div class="empty">Semua lead sudah di-follow up sesuai jadwal. 🎉</div>':''}`;
   if($('#fuReset'))$('#fuReset').onclick=()=>{if(S.rstArm)resetFu();else{S.rstArm=true;render();setTimeout(()=>{if(S.rstArm){S.rstArm=false;render()}},5000)}};
   bindRows(el);bindPlan(el);bindBossRows(el);
@@ -472,7 +491,7 @@ function grp(title,arr,cls){if(!arr.length)return '';return `<section class="gro
 function rowHtml(l,cls){const wa=waNum(l.phone);
   return `<div class="row ${cls}" data-id="${esc(l.id)}" tabindex="0">
    <div class="who"><b>${esc((l.sapaan?l.sapaan+' ':'')+l.name)}</b><small>${esc(l.company||'Perusahaan belum diisi')}${l.title?' · '+esc(l.title):''}</small></div>
-   <div class="what"><div>${stChip(l.stage)} ${tempChip(l.temp)} ${fuChip(l)}</div><small>${esc(l.nextAction||'Belum ada next action')}</small></div>
+   <div class="what"><div>${(()=>{const P=view()==='hari-ini'&&S.prioMap&&S.prioMap.get(l.id);return P&&P.rank<=10?`<span class="chip prio" title="${esc(P.why.join(', ')||'')}">#${P.rank} prioritas</span> `:''})()}${stChip(l.stage)} ${tempChip(l.temp)} ${fuChip(l)} ${minatChip(interestOf(l),l)}</div><small>${(()=>{const P=view()==='hari-ini'&&S.prioMap&&S.prioMap.get(l.id);return P&&P.why.length?'<b>Kenapa:</b> '+esc(P.why.join(', '))+' · ':''})()}${esc(l.nextAction||'Belum ada next action')}</small></div>
    <div class="act">${wa?`<a class="btn sm" href="https://wa.me/${wa}" target="_blank" rel="noopener" data-stop>WA</a>`:''}${l.active?`${FU_STAGES.includes(l.stage)?fuOpts(l).map(([d,n],i)=>`<button class="btn sm ${i?'':'ok'}" data-fu-done="${esc(l.id)}" data-days="${d}" title="Tandai sudah di-follow up, jadwalkan lagi ${n}">✓ Sudah FU · ${n}</button>`).join(''):''}${l.stage==='lost'?`<button class="btn sm" data-todb="${esc(l.id)}" title="Keluarkan dari List follow-up, tetap tersimpan di Database">→ Database</button>`:''}${NEXT[l.stage]?`<button class="btn sm" data-next="${esc(l.id)}" title="Pindah ke list berikutnya">→ ${esc(SMAP[NEXT[l.stage]].short)}</button>`:''}`:`<button class="btn sm" data-activate="${esc(l.id)}" title="Masukkan ke list follow-up aktif">Mulai follow-up</button>`}${l.active&&FU_STAGES.includes(l.stage)?`<button class="btn sm ghost ${S.lostArm===l.id?'danger':''}" data-lost="${esc(l.id)}" title="Tandai lost: keluar dari List follow-up, pindah ke Database">${S.lostArm===l.id?'Yakin lost?':'Lost'}</button>`:''}<button class="btn sm primary" data-open>Buka</button></div></div>`}
 function bindRows(el){
   el.querySelectorAll('[data-id]').forEach(r=>{r.onclick=e=>{if(e.target.closest('[data-stop],[data-fu-done],[data-next],[data-activate],[data-lost],[data-todb]'))return;openLead(r.dataset.id)};r.onkeydown=e=>{if(e.key==='Enter')openLead(r.dataset.id)}});
