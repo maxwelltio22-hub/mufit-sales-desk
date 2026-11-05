@@ -585,7 +585,7 @@ function vPipe(el){
     .sort((a,b)=>(a.nextFu||'9999').localeCompare(b.nextFu||'9999')||(a.temp==='Hot'?0:1)-(b.temp==='Hot'?0:1)||(a.name||a.company).localeCompare(b.name||b.company));
   const shown=items.slice(0,150);
   el.innerHTML=`<div class="head"><div><h1>List follow-up</h1><p class="sub">${isDb?'Lead lain yang tidak sedang kamu follow up. Klik <b>Mulai follow-up</b> untuk memasukkannya ke list aktif.':esc(SMAP[tab].hint)}</p></div><div class="spacer"></div>
-   <div class="tools"><input type="search" id="pq" placeholder="Cari nama/perusahaan" value="${esc(S.pf.q)}">${tab==='cold'?'<button class="btn primary" id="pAdd">+ Tambah dari LinkedIn</button>':''}</div></div>
+   <div class="tools"><input type="search" id="pq" placeholder="Cari nama/perusahaan" value="${esc(S.pf.q)}">${tab==='cold'?'<button class="btn" id="pBulk">Cek kontak (bulk)</button><button class="btn primary" id="pAdd">+ Tambah dari LinkedIn</button>':''}</div></div>
    <div class="stages seg">${lists.map(k=>`<button data-list="${k}" aria-pressed="${k===tab}">${esc(SMAP[k].n)} <span class="count">${all.filter(l=>l.active&&l.stage===k).length}</span></button>`).join('')}</div>
    ${isDb?`<div class="tools" style="margin:-4px 0 12px"><label class="f" style="flex-direction:row;align-items:center;gap:6px">Status terakhir <select id="dbS"><option value="">Semua</option>${STAGES.map(s=>`<option value="${s.k}" ${dbs===s.k?'selected':''}>${esc(s.n)} (${all.filter(l=>!l.active&&l.stage===s.k).length})</option>`).join('')}</select></label></div>`:''}
    ${isDb?'':`<p class="flow">Alur: LinkedIn (cold) → Warm → Ajak meeting → Habis meeting → Quotation → Deal. Tombol <b>→</b> di tiap baris memindahkan ke list berikutnya.</p>`}
@@ -593,7 +593,7 @@ function vPipe(el){
   if($('#dbS'))$('#dbS').onchange=e=>{S.pf.dbStage=e.target.value;vPipe(el)};
   $('#pq').oninput=e=>{S.pf.q=e.target.value;const p=e.target.selectionStart;vPipe(el);const n=$('#pq');n.focus();n.setSelectionRange(p,p)};
   el.querySelectorAll('[data-list]').forEach(b=>b.onclick=()=>{S.pf.list=b.dataset.list;vPipe(el)});
-  if($('#pAdd'))$('#pAdd').onclick=openPaste;
+  if($('#pAdd'))$('#pAdd').onclick=openPaste;if($('#pBulk'))$('#pBulk').onclick=openBulk;
   bindRows(el);
 }
 function moveStage(id,stage){const l=S.leads.get(id);const h=[...(l.history||[]),{d:todayStr(),t:'Pindah list: '+(SMAP[l.stage]?.n||'')+' → '+SMAP[stage].n}];
@@ -752,7 +752,8 @@ function drawLead(){
   $('#actAdd').onclick=()=>{const t=$('#actTxt').value.trim();if(t)logAct(t)};
   $('#actTxt').onkeydown=e=>{if(e.key==='Enter'){const t=e.target.value.trim();if(t)logAct(t)}};
   const save=async()=>{if(!l.name&&!l.company){toast('Isi nama PIC atau perusahaan dulu');return}
-    if(await saveLead(l)){o.isNew=false;o.dirty=false;toast('Tersimpan');render();drawLead()}};
+    let auto=false;if(l.stage==='cold'&&(String(l.phone||'').trim()||String(l.email||'').trim())){auto=true;l.stage='warm';l.active=true;l.nextAction=NEXT_ACTION.warm;if(!l.nextFu||l.nextFu>addDays(1))l.nextFu=addDays(1);l.history=[...(l.history||[]),{d:todayStr(),t:'Kasih no/email → otomatis pindah ke Warm'}]}
+    if(await saveLead(l)){o.isNew=false;o.dirty=false;toast(auto?'Ada no/email, otomatis pindah ke Warm':'Tersimpan');render();drawLead()}};
   $('#dSave').onclick=save;
   if($('#dDel'))$('#dDel').onclick=()=>{$('#delWrap').innerHTML=`<span class="confirm">Hapus permanen? <button class="btn sm danger" id="dDelY">Ya, hapus</button><button class="btn sm" id="dDelN">Batal</button></span>`;
     $('#dDelN').onclick=drawLead;$('#dDelY').onclick=async()=>{try{await S.db.doc('leads/'+l.id).delete();S.leads.delete(l.id);PEND.leads.delete(l.id);closeDrawer();render();toast('Lead dihapus')}catch(e){toast('Gagal menghapus')}}};
@@ -978,6 +979,64 @@ function openImport(){
   $('#impGo').onclick=async()=>{if(!P)return;const b=$('#impGo');b.disabled=true;b.textContent='Memasukkan…';let fails=0;const sum=[];for(const x of P){const r=await applyClaude(x,true);fails+=r.fails;sum.push(fmtY(x.date)+': '+r.add+' reach out, '+(x.rep.length+x.con.length+x.no.length)+' balasan')}toast(fails?fails+' data gagal tersimpan. Tempel ulang hasil yang sama, yang sudah masuk tidak akan dobel.':'Masuk. '+sum.join(' · '));close();S.rf.wk=0;location.hash='reach-out';render()};
   setTimeout(()=>$('#impTxt').focus(),30)}
 
+/* ---------- Cek kontak bulk: LinkedIn (cold) yang kasih no/email → Warm ---------- */
+const coldLeads=()=>[...S.leads.values()].filter(l=>l.active&&l.stage==='cold');
+function fuPrompt(){const L=coldLeads();return `Tolong cek inbox LinkedIn saya untuk orang-orang di daftar bawah ini (list follow-up LinkedIn cold MUFIT). Baca chat terbaru dengan masing-masing orang.
+Balas HANYA dengan satu blok JSON (tanpa penjelasan lain) dengan format persis:
+
+{"mufit_fu":1,
+ "kasih_kontak":[{"nama":"","linkedin":"","wa":"08...","email":"","ringkasan":"isi balasan singkat"}],
+ "tidak_tertarik":[{"nama":"","linkedin":"","ringkasan":""}],
+ "belum_kasih":[{"nama":"","ringkasan":""}]}
+
+Aturan:
+- "kasih_kontak" = orang yang di chat memberi nomor WA/HP dan/atau email. Tulis nomor dan email persis seperti di chat.
+- "tidak_tertarik" = orang yang menolak / belum butuh / belum ada planning.
+- "belum_kasih" = sudah ada chat tapi belum memberi kontak, atau belum membalas.
+- Pakai nama persis seperti di daftar dan sertakan link LinkedIn-nya. Jangan mengarang data.
+
+Daftar (${L.length} orang):
+${L.map(l=>'- '+l.name+(l.company?' ('+l.company+')':'')+(l.linkedin?' '+l.linkedin:'')).join('\n')}`}
+const PH_RE=/(?:\+?62|0)\s?8[\d\s.\-]{7,15}\d/g,EM_RE=/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig;
+function findCold(name,li){const s=liSlug(li),n=nrm(name);const L=coldLeads();return L.find(l=>s&&liSlug(l.linkedin)===s)||L.find(l=>n&&nrm(l.name)===n)||(n.length>=5?L.find(l=>{const m=nrm(l.name);return m.length>=5&&(m.includes(n)||n.includes(m))}):null)||null}
+function parseBulk(txt){const res={con:[],no:[],miss:[],json:false};const t=String(txt||'');
+  for(const b of jsonBlocks(t.replace(/```(?:json)?/gi,''))){let o;try{o=JSON.parse(b)}catch(e){continue}if(!o||typeof o!=='object'||Array.isArray(o))continue;res.json=true;
+    const arr=k=>Array.isArray(o[k])?o[k]:[];
+    for(const p of arr('kasih_kontak')){const nm=String(p.nama||p.name||'').trim(),phone=String(p.wa||p.phone||p.no||'').trim(),email=String(p.email||'').trim();if(!phone&&!email)continue;const l=findCold(nm,p.linkedin);(l?res.con:res.miss).push({l,name:nm,phone,email,note:String(p.ringkasan||'').trim()})}
+    for(const p of arr('tidak_tertarik')){const nm=String(p.nama||p.name||'').trim();const l=findCold(nm,p.linkedin);if(l)res.no.push({l,name:nm,note:String(p.ringkasan||'').trim()})}}
+  if(!res.json){const lines=t.split(/\n/),L=coldLeads();
+    lines.forEach((ln,i)=>{const ph=(ln.match(PH_RE)||[])[0]||'',em=(ln.match(EM_RE)||[])[0]||'';if(!ph&&!em)return;let l=null;
+      for(let j=i;j>=Math.max(0,i-8)&&!l;j--){const x=nrm(lines[j]);l=L.find(c=>{const m=nrm(c.name);return m.length>=5&&x.includes(m)})||L.find(c=>{const f=nrm(String(c.name||'').split(/\s+/).slice(0,2).join(' '));return f.length>=6&&x.includes(f)})||null}
+      const e={l,name:l?l.name:ln.trim().slice(0,70),phone:ph.replace(/[\s.\-]/g,''),email:em,note:''};
+      const ex=l&&res.con.find(c=>c.l===l);if(ex){ex.phone=ex.phone||e.phone;ex.email=ex.email||e.email}else(l?res.con:res.miss).push(e)})}
+  const seen=new Set();res.con=res.con.filter(c=>{if(seen.has(c.l.id))return false;seen.add(c.l.id);return true});
+  res.no=res.no.filter(c=>!seen.has(c.l.id));return res}
+async function applyBulk(B,sel){let w=0,x=0;const t=todayStr();
+  for(const c of B.con){if(!sel.has('c'+c.l.id))continue;const l=S.leads.get(c.l.id);if(!l)continue;
+    const nl={...l,phone:c.phone||l.phone,email:c.email||l.email,stage:'warm',active:true,nextAction:NEXT_ACTION.warm,lastContact:t,nextFu:addDays(1),history:[...(l.history||[]),{d:t,t:'Kasih '+[c.phone&&'no WA',c.email&&'email'].filter(Boolean).join(' & ')+' → pindah ke Warm (cek kontak bulk)'+(c.note?'. '+c.note:'')}]};
+    if(await saveLead(nl)){w++;const r=[...S.reach.values()].find(r=>r.leadId===l.id);if(r&&r.status!=='contact')await saveReach({...r,status:'contact',replyDate:r.replyDate||t})}}
+  for(const c of B.no){if(!sel.has('n'+c.l.id))continue;const l=S.leads.get(c.l.id);if(!l)continue;
+    if(await saveLead({...l,stage:'lost',active:false,nextFu:'',history:[...(l.history||[]),{d:t,t:'Tidak tertarik → Lost, pindah ke Database (cek kontak bulk)'+(c.note?'. '+c.note:'')}]}))x++}
+  return {w,x}}
+function openBulk(){const host=$('#drawerHost');let B=null;const sel=new Set();
+  host.innerHTML=`<div class="scrim" id="scrim"></div><aside class="drawer" role="dialog" aria-label="Cek kontak bulk"><div class="d-head"><div style="flex:1"><h1>Cek kontak (bulk)</h1><p class="sub">Semua lead LinkedIn (cold) yang sudah kasih no WA / email langsung pindah ke Warm sekaligus.</p></div><button class="btn ghost" id="dClose" aria-label="Tutup">✕</button></div>
+   <div class="d-body"><section class="sec"><h2>1. Salin prompt untuk Claude di Chrome</h2><p class="sub" style="font-size:12.5px">Prompt sudah berisi daftar ${coldLeads().length} lead cold kamu. Tempel ke Claude di Chrome saat LinkedIn terbuka.</p><div class="quick"><button class="btn sm primary" id="cpFu">Salin prompt</button></div></section>
+   <section class="sec"><h2>2. Tempel hasilnya di sini</h2><p class="sub" style="font-size:12.5px">Bisa jawaban JSON dari Claude, atau teks chat yang kamu salin sendiri (nama + nomor/email). Nomor dan email dicari otomatis.</p><textarea id="bkTxt" rows="9" placeholder="Tempel jawaban Claude atau teks chat di sini"></textarea><div id="bkPrev"></div></section></div>
+   <div class="d-foot"><button class="btn primary" id="bkGo" disabled>Pindahkan</button><span class="sub" id="bkMsg" style="margin:0;font-size:12px"></span></div></aside>`;
+  S.open={type:'bulk'};const close=()=>{S.open=null;host.innerHTML=''};$('#scrim').onclick=close;$('#dClose').onclick=close;
+  $('#cpFu').onclick=()=>copy(fuPrompt());
+  const upd=()=>{const n=[...sel].filter(k=>k[0]==='c').length,m=[...sel].filter(k=>k[0]==='n').length;const g=$('#bkGo');g.disabled=!(n+m);g.textContent=n+m?[n&&n+' ke Warm',m&&m+' ke Lost'].filter(Boolean).join(' · '):'Pindahkan'};
+  const draw=()=>{const pv=$('#bkPrev');if(!B){pv.innerHTML='';upd();return}
+    const row=(k,c,extra)=>`<label class="chk" style="align-items:flex-start;padding:6px 0;border-top:1px solid var(--line)"><input type="checkbox" data-bk="${k}" ${sel.has(k)?'checked':''}><span><b>${esc(c.l.name)}</b>${c.l.company?' · '+esc(c.l.company):''}<br><small style="color:var(--muted)">${extra}</small></span></label>`;
+    pv.innerHTML=(B.con.length?`<p style="margin:12px 0 4px"><b>Kasih kontak → Warm (${B.con.length})</b></p>`+B.con.map(c=>row('c'+c.l.id,c,esc([c.phone,c.email].filter(Boolean).join(' / '))+(c.l.phone||c.l.email?' <i>(sudah ada: '+esc([c.l.phone,c.l.email].filter(Boolean).join(' / '))+')</i>':'')+(c.note?'<br>'+esc(c.note):''))).join(''):'')
+      +(B.no.length?`<p style="margin:12px 0 4px"><b>Tidak tertarik → Lost (${B.no.length})</b> <small style="color:var(--muted)">belum dicentang, centang kalau setuju</small></p>`+B.no.map(c=>row('n'+c.l.id,c,esc(c.note||''))).join(''):'')
+      +(B.miss.length?`<p style="margin:12px 0 4px"><b>Tidak cocok dengan lead cold (${B.miss.length})</b></p>`+B.miss.map(c=>`<div style="font-size:12.5px;color:var(--muted)">${esc(c.name)} · ${esc([c.phone,c.email].filter(Boolean).join(' / '))}</div>`).join('')+'<p class="sub" style="font-size:12px">Cek namanya di Database, atau tambahkan manual.</p>':'')
+      +(!B.con.length&&!B.no.length&&!B.miss.length?'<p class="chip late" style="white-space:normal;margin-top:8px">Belum ada nomor/email yang terbaca.</p>':'');
+    pv.querySelectorAll('[data-bk]').forEach(c=>c.onchange=()=>{if(c.checked)sel.add(c.dataset.bk);else sel.delete(c.dataset.bk);upd()});upd()};
+  $('#bkTxt').oninput=e=>{const v=e.target.value;if(!v.trim()){B=null;sel.clear();draw();return}B=parseBulk(v);sel.clear();B.con.forEach(c=>sel.add('c'+c.l.id));draw()};
+  $('#bkGo').onclick=async()=>{if(!B)return;const g=$('#bkGo');g.disabled=true;g.textContent='Memindahkan…';const r=await applyBulk(B,sel);toast([r.w&&r.w+' lead pindah ke Warm',r.x&&r.x+' lead ke Lost'].filter(Boolean).join(', ')||'Tidak ada yang dipindah');close();render()};
+  setTimeout(()=>$('#bkTxt').focus(),30)}
+
 /* ---------- Daily task ---------- */
 const TGT_DEF={connect:20,reach:20,meet:2,deal:1};
 const tgt=()=>({...TGT_DEF,...(S.targets||{})});
@@ -997,7 +1056,7 @@ function planHtml(act,t){
     {k:'connect',ico:'1',n:`Kirim ${T.connect} connect di LinkedIn`,p:[d.connect||0,T.connect],why:'Tambah orang baru ke jaringan, bahan reach out besok.'},
     {k:'reach',ico:'2',n:`Reach out ${T.reach} orang (HR/HRGA/TA/L&D/C&B)`,p:[reachN,T.reach],why:'Pakai Claude di Chrome, lalu klik Tempel hasil Claude.',btn:['rimp2','Tempel hasil Claude']},
     {k:'replies',ico:'3',n:'Cek & balas semua yang membalas di LinkedIn',why:repToday?repToday+' balasan sudah tercatat hari ini.':'Catat lewat Tempel hasil Claude supaya masuk laporan.'},
-    {k:'cold',ico:'4',n:'Minta nomor WA/email ke yang sudah membalas',L:dueBy('cold'),why:'Target: pindah ke Warm.'},
+    {k:'cold',ico:'4',n:'Minta nomor WA/email ke yang sudah membalas',L:dueBy('cold'),why:'Target: pindah ke Warm. Yang sudah kasih kontak: pakai Cek kontak (bulk).',btn:['bulk2','Cek kontak (bulk)']},
     {k:'warm',ico:'5',n:'Kirim compro & ajak ngobrol (Warm)',L:dueBy('warm'),why:'Target: dapat jadwal meeting.'},
     {k:'ajak',ico:'6',n:'Kunci jadwal meeting',L:dueBy('ajak'),why:`Meeting minggu ini: ${meetW}/${T.meet}.`},
     {k:'meeting',ico:'7',n:'Follow-up setelah meeting',L:dueBy('meeting'),why:'Target: ada kebutuhan → kirim quotation.'},
@@ -1021,7 +1080,7 @@ function planHtml(act,t){
 function bindPlan(el){
   el.querySelectorAll('[data-task]').forEach(c=>c.onchange=()=>toggleTask(c.dataset.task,c.checked));
   el.querySelectorAll('[data-open-lead]').forEach(b=>b.onclick=()=>openLead(b.dataset.openLead));
-  if($('#rimp2'))$('#rimp2').onclick=openImport;
+  if($('#rimp2'))$('#rimp2').onclick=openImport;if($('#bulk2'))$('#bulk2').onclick=openBulk;
   $('#tgtEdit').onclick=()=>{S.tgtOpen=!S.tgtOpen;render()};
   el.querySelectorAll('[data-tgt]').forEach(i=>i.onchange=()=>{const v={...tgt(),[i.dataset.tgt]:Math.max(0,+i.value||0)};saveTargets(v)});
 }
