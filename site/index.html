@@ -637,7 +637,7 @@ function moveStage(id,stage){const l=S.leads.get(id);const h=[...(l.history||[])
   const patch={stage,history:h,active:true};if(stage==='meeting')patch.meeting=true;if(NEXT_ACTION[stage]!==undefined){patch.nextAction=NEXT_ACTION[stage];patch.nextFu=stage==='deal'?'':addDays(3)}patchLead(id,patch).then(()=>toast('Pindah ke '+SMAP[stage].n))}
 
 /* ---------- Semua lead ---------- */
-const inDb=l=>l.origin==='List reach'||!l.active||!!(l.phone||l.email)||l.stage!=='cold'||l.temp==='Hot';
+const inDb=l=>!!(String(l.phone||'').trim()||String(l.email||'').trim());
 function vLeads(el){
   const f=S.f,q=f.q.toLowerCase();const all=[...S.leads.values()].filter(inDb);
   const sources=[...new Set(all.map(l=>l.source).filter(Boolean))];
@@ -645,7 +645,7 @@ function vLeads(el){
     &&(!f.nofu||(!l.nextFu&&!['deal','lost'].includes(l.stage)))&&(!q||[l.name,l.company,l.industry,l.email,l.phone,l.notes].join(' ').toLowerCase().includes(q)));
   const key=f.sort;const rk=l=>l.row||100000+(l.createdAt||'').replace(/-/g,'')/1;list.sort((a,b)=>{if(key==='row')return (rk(a)-rk(b))*f.dir;let x=a[key]||'',y=b[key]||'';if(key==='stage'){x=STAGES.findIndex(s=>s.k===a.stage);y=STAGES.findIndex(s=>s.k===b.stage)}if(!x&&y)return 1;if(x&&!y)return -1;return (x>y?1:x<y?-1:0)*f.dir});
   const th=(k,n)=>`<th data-sort="${k}">${n}${f.sort===k?(f.dir>0?' ↑':' ↓'):''}</th>`;
-  el.innerHTML=`<div class="head"><div><h1>Database</h1><p class="sub">${list.length} dari ${all.length} lead (181 dari Excel List reach, plus lead lain di luar follow-up). ${all.filter(l=>l.active).length} di antaranya sedang ada di List follow-up. Klik <b>Mulai</b> untuk memasukkan lead lain ke List follow-up.</p></div><div class="spacer"></div>
+  el.innerHTML=`<div class="head"><div><h1>Database</h1><p class="sub">${list.length} dari ${all.length} lead yang sudah punya no WA / email. Lead tanpa kontak tidak masuk Database. ${all.filter(l=>l.active).length} di antaranya sedang ada di List follow-up. Klik <b>Mulai</b> untuk memasukkan lead lain ke List follow-up.</p></div><div class="spacer"></div>
    <div class="tools"><button class="btn" id="dupBtn">Cek data dobel${(()=>{const n=dupPairs().length;return n?` <span class="count" style="background:var(--bad-soft);color:var(--bad)">${n}</span>`:''})()}</button><button class="btn" id="exp">Ekspor CSV</button><button class="btn primary" id="xl">Laporan Excel</button></div></div>
    <div class="tools" style="margin-bottom:12px">
     <input type="search" id="lq" placeholder="Cari nama, perusahaan, email, catatan" value="${esc(f.q)}" style="flex:1;min-width:200px">
