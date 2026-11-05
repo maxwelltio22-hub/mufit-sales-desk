@@ -399,7 +399,7 @@ async function boot(){
   db.collection('reach').onSnapshot(snap=>{S.reach=mergePend('reach',new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}])));if(['reach-out','dashboard','hari-ini','tugas-atasan','ringkasan'].includes(view()))render();else counts()},()=>{});
   db.collection('bossTasks').onSnapshot(snap=>{S.bossTasks=new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));render()},()=>{});
   db.collection('tasks').onSnapshot(snap=>{S.tasks=new Map(snap.docs.map(d=>[d.id,d.data()]));if(['hari-ini','tugas-atasan'].includes(view()))render()},()=>{});
-  db.collection('settings').onSnapshot(snap=>{const d=snap.docs.find(x=>x.id==='targets');S.targets=d?d.data():null;const r=snap.docs.find(x=>x.id==='fuReset');S.fuReset=r?(r.data().date||''):'';render()},()=>{});
+  db.collection('settings').onSnapshot(snap=>{const d=snap.docs.find(x=>x.id==='targets');S.targets=d?d.data():null;const r=snap.docs.find(x=>x.id==='fuReset');S.fuReset=r?(r.data().date||''):'';const di=snap.docs.find(x=>x.id==='dupIgnore');S.dupIgnore=di?(di.data().pairs||[]):[];render()},()=>{});
   db.collection('daily').onSnapshot(snap=>{S.daily=new Map(snap.docs.map(d=>[d.id,d.data()]));if(['hari-ini','dashboard','tugas-atasan','ringkasan'].includes(view()))render()},()=>{});
   try{S.dl=await window.claude.use('downloads')}catch(e){}
   try{S.sample=await window.claude.use('sample')}catch(e){}
@@ -611,7 +611,7 @@ function vLeads(el){
   const key=f.sort;const rk=l=>l.row||100000+(l.createdAt||'').replace(/-/g,'')/1;list.sort((a,b)=>{if(key==='row')return (rk(a)-rk(b))*f.dir;let x=a[key]||'',y=b[key]||'';if(key==='stage'){x=STAGES.findIndex(s=>s.k===a.stage);y=STAGES.findIndex(s=>s.k===b.stage)}if(!x&&y)return 1;if(x&&!y)return -1;return (x>y?1:x<y?-1:0)*f.dir});
   const th=(k,n)=>`<th data-sort="${k}">${n}${f.sort===k?(f.dir>0?' ↑':' ↓'):''}</th>`;
   el.innerHTML=`<div class="head"><div><h1>Database</h1><p class="sub">${list.length} dari ${all.length} lead (181 dari Excel List reach, plus lead lain di luar follow-up). ${all.filter(l=>l.active).length} di antaranya sedang ada di List follow-up. Klik <b>Mulai</b> untuk memasukkan lead lain ke List follow-up.</p></div><div class="spacer"></div>
-   <div class="tools"><button class="btn" id="exp">Ekspor CSV</button><button class="btn primary" id="xl">Laporan Excel</button></div></div>
+   <div class="tools"><button class="btn" id="dupBtn">Cek data dobel${(()=>{const n=dupPairs().length;return n?` <span class="count" style="background:var(--bad-soft);color:var(--bad)">${n}</span>`:''})()}</button><button class="btn" id="exp">Ekspor CSV</button><button class="btn primary" id="xl">Laporan Excel</button></div></div>
    <div class="tools" style="margin-bottom:12px">
     <input type="search" id="lq" placeholder="Cari nama, perusahaan, email, catatan" value="${esc(f.q)}" style="flex:1;min-width:200px">
     <select id="ls"><option value="">Semua tahap</option>${STAGES.map(s=>`<option value="${s.k}" ${f.stage===s.k?'selected':''}>${s.n}</option>`).join('')}</select>
@@ -630,7 +630,7 @@ function vLeads(el){
   el.querySelectorAll('tbody tr').forEach(r=>r.onclick=e=>{if(e.target.closest('[data-activate]'))return;openLead(r.dataset.id)});
   el.querySelectorAll('[data-activate]').forEach(b=>b.onclick=e=>{e.stopPropagation();const l=S.leads.get(b.dataset.activate);if(!l)return;
     patchLead(l.id,{active:true,nextFu:l.nextFu&&l.nextFu>=todayStr()?l.nextFu:addDays(1),history:[...(l.history||[]),{d:todayStr(),t:'Mulai di-follow up (masuk list aktif)'}]}).then(()=>toast('Masuk List follow-up: '+(SMAP[l.stage]?.n||'')))});
-  $('#exp').onclick=()=>exportCsv(list);$('#xl').onclick=e=>exportExcel(e.currentTarget);
+  $('#dupBtn').onclick=openDups;$('#exp').onclick=()=>exportCsv(list);$('#xl').onclick=e=>exportExcel(e.currentTarget);
 }
 async function exportCsv(list){
   const cols=['name','sapaan','title','company','industry','type','source','stage','temp','phone','email','nextFu','nextAction','lastContact','value','notes'];
@@ -987,7 +987,7 @@ const coldLeads=()=>[...S.leads.values()].filter(l=>l.active&&l.stage==='cold');
 const phN=p=>{let d=String(p||'').split('/')[0].replace(/[^0-9]/g,'');if(d.startsWith('62'))d='0'+d.slice(2);return d.length>=9?d:''};
 function dupOf(c){const cp=phN(c.phone),ce=String(c.email||'').trim().toLowerCase();if(cp||ce){const o=[...S.leads.values()].find(o=>o.id!==c.id&&o.stage!=='cold'&&((cp&&phN(o.phone)===cp)||(ce&&String(o.email||'').trim().toLowerCase()===ce)));if(o)return o}
   const n=nrm(c.name);if(n.length<4)return null;const f=nrm(String(c.name||'').split(/\s+/).slice(0,2).join(' ')),cc=nrm(c.company);
-  return [...S.leads.values()].find(o=>{if(o.id===c.id)return false;if(!(o.phone||o.email||(o.stage!=='cold'&&o.stage!=='lost')))return false;const on=nrm(o.name);if(on===n)return true;
+  return [...S.leads.values()].find(o=>{if(o.id===c.id)return false;if(!(o.phone||o.email||(o.stage!=='cold'&&o.stage!=='lost')))return false;if(sameName(o.name,c.name)&&coMatch(o.company,c.company))return true;
     const of=nrm(String(o.name||'').split(/\s+/).slice(0,2).join(' ')),oc=nrm(o.company);return f.length>=6&&of===f&&cc&&oc&&(cc.includes(oc)||oc.includes(cc))})||null}
 function coldSplit(){const L=coldLeads(),has=[],dup=[],check=[];for(const l of L){const d=dupOf(l);if(d)dup.push({l,d});else if(l.phone||l.email)has.push(l);else check.push(l)}return {has,dup,check}}
 function fuPrompt(){const L=coldSplit().check;return `Tolong cek inbox LinkedIn saya untuk orang-orang di daftar bawah ini (list follow-up LinkedIn cold MUFIT). Baca chat terbaru dengan masing-masing orang.
@@ -1024,17 +1024,45 @@ async function applyBulk(B,sel){let w=0,x=0;const t=todayStr();
   for(const c of B.con){if(!sel.has('c'+c.l.id))continue;const l=S.leads.get(c.l.id);if(!l)continue;
     const nl={...l,phone:c.phone||l.phone,email:c.email||l.email,stage:'warm',active:true,nextAction:NEXT_ACTION.warm,lastContact:t,nextFu:addDays(1),history:[...(l.history||[]),{d:t,t:'Kasih '+[c.phone&&'no WA',c.email&&'email'].filter(Boolean).join(' & ')+' → pindah ke Warm (cek kontak bulk)'+(c.note?'. '+c.note:'')}]};
     if(await saveLead(nl)){w++;const r=[...S.reach.values()].find(r=>r.leadId===l.id);if(r&&r.status!=='contact')await saveReach({...r,status:'contact',replyDate:r.replyDate||t})}}
-  for(const c of (B.dup||[])){if(!sel.has('d'+c.l.id))continue;const l=S.leads.get(c.l.id),d=S.leads.get(c.d.id);if(!l||!d)continue;
-    const stage=['cold','lost','hold'].includes(d.stage)?'warm':d.stage;const nd={...d,active:true,stage,name:d.name||l.name,phone:d.phone||l.phone,email:d.email||l.email,linkedin:d.linkedin||l.linkedin,title:d.title||l.title,temp:d.temp==='Hot'||l.temp==='Hot'?'Hot':(d.temp||l.temp),nextAction:d.nextAction||NEXT_ACTION[stage]||'',nextFu:d.nextFu||addDays(1),
-      notes:[d.notes,l.notes&&l.notes!==d.notes?l.notes:''].filter(Boolean).join(' | '),history:[...(d.history||[]),...(l.history||[]),{d:t,t:'Digabung dengan data LinkedIn (cold) yang dobel'}].sort((a,b)=>(a.d||'').localeCompare(b.d||''))};
-    if(await saveLead(nd)){try{await S.db.doc('leads/'+l.id).delete();S.leads.delete(l.id);PEND.leads.delete(l.id)}catch(e){}for(const r of [...S.reach.values()].filter(r=>r.leadId===l.id))await saveReach({...r,leadId:d.id,status:r.status==='contact'?r.status:'contact'});w++}}
+  for(const c of (B.dup||[])){if(!sel.has('d'+c.l.id))continue;const l=S.leads.get(c.l.id),d=S.leads.get(c.d.id);if(!l||!d)continue;if(await mergeLeads(d,l,true))w++}
   for(const c of B.no){if(!sel.has('n'+c.l.id))continue;const l=S.leads.get(c.l.id);if(!l)continue;
     if(await saveLead({...l,stage:'lost',active:false,nextFu:'',history:[...(l.history||[]),{d:t,t:'Tidak tertarik → Lost, pindah ke Database (cek kontak bulk)'+(c.note?'. '+c.note:'')}]}))x++}
   return {w,x}}
+/* gabung dua lead: d dipertahankan, l dihapus */
+async function mergeLeads(d,l,toWarm){const t=todayStr();const stage=toWarm&&['cold','lost','hold'].includes(d.stage)?'warm':d.stage;
+  const nd={...d,active:toWarm?true:(d.active||l.active),stage,name:(String(l.name||'').length>String(d.name||'').length&&!toWarm?l.name:d.name)||l.name,company:d.company||l.company,phone:d.phone||l.phone,email:d.email||l.email,linkedin:d.linkedin||l.linkedin,title:d.title||l.title,sapaan:d.sapaan||l.sapaan,industry:d.industry||l.industry,
+    temp:d.temp==='Hot'||l.temp==='Hot'?'Hot':(d.temp||l.temp),nextAction:d.nextAction||l.nextAction||NEXT_ACTION[stage]||'',nextFu:d.nextFu||l.nextFu||(toWarm?addDays(1):''),lastFu:[d.lastFu,l.lastFu].filter(Boolean).sort().pop()||'',meeting:!!(d.meeting||l.meeting),row:d.row||l.row,
+    notes:[d.notes,l.notes&&l.notes!==d.notes?l.notes:''].filter(Boolean).join(' | '),history:[...(d.history||[]),...(l.history||[]),{d:t,t:'Digabung dengan data dobel ('+(l.name||l.company||'')+')'}].sort((a,b)=>(a.d||'').localeCompare(b.d||''))};
+  Object.keys(nd).forEach(k=>nd[k]===undefined&&delete nd[k]);
+  if(!await saveLead(nd))return false;try{await S.db.doc('leads/'+l.id).delete();S.leads.delete(l.id);PEND.leads.delete(l.id)}catch(e){}
+  for(const r of [...S.reach.values()].filter(r=>r.leadId===l.id))await saveReach({...r,leadId:d.id,status:toWarm&&(d.phone||d.email)?'contact':r.status});return true}
+/* nama dianggap sama walau beda ejaan tipis (huruf dobel, 1 huruf beda) */
+const nameKey=x=>nrm(x).replace(/(.)\1+/g,'$1');
+function lev1(a,b){if(a===b)return true;if(Math.abs(a.length-b.length)>1)return false;let i=0,j=0,e=0;while(i<a.length&&j<b.length){if(a[i]===b[j]){i++;j++;continue}if(++e>1)return false;if(a.length>b.length)i++;else if(b.length>a.length)j++;else{i++;j++}}return e+(a.length-i)+(b.length-j)<=1}
+function sameName(a,b){const x=nameKey(a),y=nameKey(b);if(x.length<4||y.length<4)return false;if(x===y)return true;return x.length>=10&&y.length>=10&&lev1(x,y)}
+function coMatch(a,b){const x=nrm(a),y=nrm(b);return !x||!y||x.includes(y)||y.includes(x)}
+const SRANK={deal:7,quotation:6,meeting:5,ajak:4,warm:3,hold:2,cold:1,lost:0};
+function leadScore(l){return (SRANK[l.stage]||0)*10+(l.phone?3:0)+(l.email?3:0)+(l.row?2:0)+(l.active?1:0)}
+function dupPairs(){const L=[...S.leads.values()],out=[],ign=new Set((S.dupIgnore||[]));
+  for(let i=0;i<L.length;i++)for(let j=i+1;j<L.length;j++){const a=L[i],b=L[j];const why=[];
+    const pa=phN(a.phone),pb=phN(b.phone);if(pa&&pa===pb)why.push('no HP sama');
+    const ea=String(a.email||'').trim().toLowerCase(),eb=String(b.email||'').trim().toLowerCase();if(ea&&ea===eb)why.push('email sama');
+    const sa=liSlug(a.linkedin),sb=liSlug(b.linkedin);if(sa&&sa===sb)why.push('LinkedIn sama');
+    if(sameName(a.name,b.name)&&coMatch(a.company,b.company))why.push(nameKey(a.name)===nameKey(b.name)?'nama sama':'nama mirip');
+    if(!why.length)continue;const k=[a.id,b.id].sort().join('|');if(ign.has(k))continue;
+    const [keep,drop]=leadScore(a)>=leadScore(b)?[a,b]:[b,a];out.push({k,keep,drop,why})}
+  return out}
 /* otomatis: lead cold yang sudah punya no/email, atau datanya sudah ada di Database, langsung jadi Warm */
 async function autoWarm(){if(S.awRun||S.role!=='owner'||!S.db)return;const SP=coldSplit();if(!SP.has.length&&!SP.dup.length)return;S.awRun=true;
   try{const B={con:SP.has.map(l=>({l,phone:l.phone,email:l.email,note:''})),no:[],dup:SP.dup};const sel=new Set([...B.con.map(c=>'c'+c.l.id),...B.dup.map(c=>'d'+c.l.id)]);const r=await applyBulk(B,sel);
     if(r.w)toast(r.w+' lead cold sudah punya no/email di Database, otomatis jadi Warm');render()}finally{S.awRun=false}}
+function openDups(){const host=$('#drawerHost');const lab=l=>`<b>${esc(l.name||'(tanpa nama)')}</b>${l.company?' · '+esc(l.company):''}<br><small style="color:var(--muted)">${esc(SMAP[l.stage]?.n||l.stage)}${l.active?' · di List follow-up':''}${l.phone?' · '+esc(l.phone):''}${l.email?' · '+esc(l.email):''}${l.row?' · No '+l.row:''}</small>`;
+  const draw=()=>{const P=dupPairs();host.innerHTML=`<div class="scrim" id="scrim"></div><aside class="drawer" role="dialog" aria-label="Data dobel"><div class="d-head"><div style="flex:1"><h1>Data dobel</h1><p class="sub">Dicek dari no HP, email, link LinkedIn, dan nama (termasuk beda ejaan tipis, misalnya Suhailla / Suhaila). Klik <b>Gabung</b>: data digabung ke lead yang lebih lengkap, yang satunya dihapus.</p></div><button class="btn ghost" id="dClose" aria-label="Tutup">✕</button></div>
+   <div class="d-body">${P.length?P.map(x=>`<section class="sec" style="margin-bottom:10px"><p class="sub" style="margin:0 0 6px;font-size:12px">${esc(x.why.join(', '))}</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px"><div><span class="chip today">Dipertahankan</span><br>${lab(x.keep)}</div><div><span class="chip late">Dihapus setelah digabung</span><br>${lab(x.drop)}</div></div><div class="quick" style="margin-top:8px"><button class="btn sm primary" data-merge="${esc(x.k)}">Gabung</button><button class="btn sm" data-swap="${esc(x.k)}">Tukar (pertahankan yang kanan)</button><button class="btn sm ghost" data-ign="${esc(x.k)}">Bukan orang yang sama</button></div></section>`).join(''):'<div class="empty">Tidak ada data dobel. 🎉</div>'}</div></aside>`;
+    $('#scrim').onclick=close;$('#dClose').onclick=close;
+    host.querySelectorAll('[data-merge],[data-swap]').forEach(b=>b.onclick=async()=>{const x=P.find(p=>p.k===(b.dataset.merge||b.dataset.swap));if(!x)return;b.disabled=true;const [d,l]=b.dataset.swap?[x.drop,x.keep]:[x.keep,x.drop];if(await mergeLeads(S.leads.get(d.id)||d,S.leads.get(l.id)||l,false)){toast('Digabung: '+(d.name||d.company));render();draw()}});
+    host.querySelectorAll('[data-ign]').forEach(b=>b.onclick=async()=>{S.dupIgnore=[...(S.dupIgnore||[]),b.dataset.ign];try{await S.db.doc('settings/dupIgnore').set({pairs:S.dupIgnore})}catch(e){}toast('Ditandai bukan dobel');render();draw()})};
+  const close=()=>{S.open=null;host.innerHTML='';render()};S.open={type:'dups'};draw()}
 function openBulk(){const host=$('#drawerHost');const SP=coldSplit();const pre=()=>({con:SP.has.map(l=>({l,name:l.name,phone:l.phone,email:l.email,note:'Kontak sudah ada di data lead ini',pre:true})),no:[],miss:[],dup:SP.dup.map(x=>({...x}))});let B=pre();const sel=new Set();const preSel=()=>{B.con.forEach(c=>sel.add('c'+c.l.id));B.dup.forEach(c=>sel.add('d'+c.l.id))};preSel();
   host.innerHTML=`<div class="scrim" id="scrim"></div><aside class="drawer" role="dialog" aria-label="Cek kontak bulk"><div class="d-head"><div style="flex:1"><h1>Cek kontak (bulk)</h1><p class="sub">Semua lead LinkedIn (cold) yang sudah kasih no WA / email langsung pindah ke Warm sekaligus.</p></div><button class="btn ghost" id="dClose" aria-label="Tutup">✕</button></div>
    <div class="d-body"><section class="sec"><h2>1. Salin prompt untuk Claude di Chrome</h2><p class="sub" style="font-size:12.5px">Prompt hanya berisi <b>${SP.check.length}</b> lead cold yang belum punya kontak. ${SP.has.length+SP.dup.length?`${SP.has.length+SP.dup.length} lead lain tidak ikut dicek karena datanya sudah ada (lihat di bawah).`:''} Tempel ke Claude di Chrome saat LinkedIn terbuka.</p><div class="quick"><button class="btn sm primary" id="cpFu">Salin prompt</button></div></section>
