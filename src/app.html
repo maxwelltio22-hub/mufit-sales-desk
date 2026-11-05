@@ -96,7 +96,30 @@ button.tile:hover{border-color:var(--accent)}
 .btn.danger{background:var(--bad-soft);border-color:var(--bad);color:var(--bad)}
 .btn.ok{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 .fu-help{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:4px 0 12px;flex-wrap:wrap}.fu-help .sub{flex:1;min-width:240px}
-@media (max-width:640px){.row{grid-template-columns:1fr;gap:6px}.row .act{justify-content:flex-start}}
+@media (max-width:640px){.row{grid-template-columns:minmax(0,1fr);gap:8px;padding:10px 12px}.row .act{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.row .act>*{justify-content:center;text-align:center;padding:8px 4px;white-space:normal;line-height:1.2;min-height:36px}.row .act [data-fu-done]{grid-column:span 2;order:-1}.row .who b{white-space:normal}}
+/* HP: header ringkas & ikut scroll, tab di bawah layar */
+@media (max-width:640px){
+ header{position:static}
+ .bar{gap:8px;padding-block:8px}
+ .brand{font-size:18px;flex:1 1 auto;min-width:0}.brand .logo{width:34px}.brand small{display:none}
+ .bar>.spacer{display:none}
+ #sync{order:2}#sync span:not(.dot){display:none}
+ #logoutBtn{order:3;padding:6px 8px}
+ #importBtn,#pvBoss{display:none!important}
+ .gs{order:4}
+ #pasteLi,#addLead{order:5;flex:1 1 0;justify-content:center;padding:9px 8px;font-size:13.5px}
+ nav#nav{position:fixed;left:0;right:0;bottom:0;z-index:30;background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -4px 14px rgba(0,0,0,.06);padding:0 6px env(safe-area-inset-bottom,0px);gap:0}
+ nav#nav a{flex:1 0 auto;flex-direction:column;gap:2px;padding:8px 10px 7px;font-size:12px;border-bottom:0;border-top:3px solid transparent;justify-content:center}
+ nav#nav a[aria-current="page"]{border-top-color:var(--accent);color:var(--accent)}
+ nav#nav a .count{font-size:10.5px;padding:0 6px}
+ body{padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+ .toast{bottom:calc(76px + env(safe-area-inset-bottom,0px))!important}
+ h1{font-size:24px}
+ .head{margin-bottom:12px}
+ .tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.tile{padding:10px 12px}.tile b{font-size:24px}
+ .fu-help .sub{min-width:0}
+ .drawer{width:100%}
+}
 /* Kanban */
 .board-scroll{overflow-x:auto;padding-bottom:10px;margin-inline:-4px}
 .board{display:grid;grid-auto-flow:column;grid-auto-columns:250px;gap:10px;padding-inline:4px;align-items:start}
