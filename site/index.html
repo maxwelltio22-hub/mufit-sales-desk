@@ -984,10 +984,12 @@ function openImport(){
 /* ---------- Cek kontak bulk: LinkedIn (cold) yang kasih no/email → Warm ---------- */
 const coldLeads=()=>[...S.leads.values()].filter(l=>l.active&&l.stage==='cold');
 /* lead cold yang ternyata sudah ada di Database (nama sama dengan lead lain yang sudah punya kontak / sudah lewat cold) */
-function dupOf(c){const n=nrm(c.name);if(n.length<4)return null;const f=nrm(String(c.name||'').split(/\s+/).slice(0,2).join(' ')),cc=nrm(c.company);
+const phN=p=>{let d=String(p||'').split('/')[0].replace(/[^0-9]/g,'');if(d.startsWith('62'))d='0'+d.slice(2);return d.length>=9?d:''};
+function dupOf(c){const cp=phN(c.phone),ce=String(c.email||'').trim().toLowerCase();if(cp||ce){const o=[...S.leads.values()].find(o=>o.id!==c.id&&o.stage!=='cold'&&((cp&&phN(o.phone)===cp)||(ce&&String(o.email||'').trim().toLowerCase()===ce)));if(o)return o}
+  const n=nrm(c.name);if(n.length<4)return null;const f=nrm(String(c.name||'').split(/\s+/).slice(0,2).join(' ')),cc=nrm(c.company);
   return [...S.leads.values()].find(o=>{if(o.id===c.id)return false;if(!(o.phone||o.email||(o.stage!=='cold'&&o.stage!=='lost')))return false;const on=nrm(o.name);if(on===n)return true;
     const of=nrm(String(o.name||'').split(/\s+/).slice(0,2).join(' ')),oc=nrm(o.company);return f.length>=6&&of===f&&cc&&oc&&(cc.includes(oc)||oc.includes(cc))})||null}
-function coldSplit(){const L=coldLeads(),has=[],dup=[],check=[];for(const l of L){if(l.phone||l.email)has.push(l);else{const d=dupOf(l);if(d)dup.push({l,d});else check.push(l)}}return {has,dup,check}}
+function coldSplit(){const L=coldLeads(),has=[],dup=[],check=[];for(const l of L){const d=dupOf(l);if(d)dup.push({l,d});else if(l.phone||l.email)has.push(l);else check.push(l)}return {has,dup,check}}
 function fuPrompt(){const L=coldSplit().check;return `Tolong cek inbox LinkedIn saya untuk orang-orang di daftar bawah ini (list follow-up LinkedIn cold MUFIT). Baca chat terbaru dengan masing-masing orang.
 Balas HANYA dengan satu blok JSON (tanpa penjelasan lain) dengan format persis:
 
@@ -1023,7 +1025,7 @@ async function applyBulk(B,sel){let w=0,x=0;const t=todayStr();
     const nl={...l,phone:c.phone||l.phone,email:c.email||l.email,stage:'warm',active:true,nextAction:NEXT_ACTION.warm,lastContact:t,nextFu:addDays(1),history:[...(l.history||[]),{d:t,t:'Kasih '+[c.phone&&'no WA',c.email&&'email'].filter(Boolean).join(' & ')+' → pindah ke Warm (cek kontak bulk)'+(c.note?'. '+c.note:'')}]};
     if(await saveLead(nl)){w++;const r=[...S.reach.values()].find(r=>r.leadId===l.id);if(r&&r.status!=='contact')await saveReach({...r,status:'contact',replyDate:r.replyDate||t})}}
   for(const c of (B.dup||[])){if(!sel.has('d'+c.l.id))continue;const l=S.leads.get(c.l.id),d=S.leads.get(c.d.id);if(!l||!d)continue;
-    const stage=['cold','lost','hold'].includes(d.stage)?'warm':d.stage;const nd={...d,active:true,stage,linkedin:d.linkedin||l.linkedin,title:d.title||l.title,temp:d.temp||l.temp,nextAction:d.nextAction||NEXT_ACTION[stage]||'',nextFu:d.nextFu||addDays(1),
+    const stage=['cold','lost','hold'].includes(d.stage)?'warm':d.stage;const nd={...d,active:true,stage,name:d.name||l.name,phone:d.phone||l.phone,email:d.email||l.email,linkedin:d.linkedin||l.linkedin,title:d.title||l.title,temp:d.temp==='Hot'||l.temp==='Hot'?'Hot':(d.temp||l.temp),nextAction:d.nextAction||NEXT_ACTION[stage]||'',nextFu:d.nextFu||addDays(1),
       notes:[d.notes,l.notes&&l.notes!==d.notes?l.notes:''].filter(Boolean).join(' | '),history:[...(d.history||[]),...(l.history||[]),{d:t,t:'Digabung dengan data LinkedIn (cold) yang dobel'}].sort((a,b)=>(a.d||'').localeCompare(b.d||''))};
     if(await saveLead(nd)){try{await S.db.doc('leads/'+l.id).delete();S.leads.delete(l.id);PEND.leads.delete(l.id)}catch(e){}for(const r of [...S.reach.values()].filter(r=>r.leadId===l.id))await saveReach({...r,leadId:d.id,status:r.status==='contact'?r.status:'contact'});w++}}
   for(const c of B.no){if(!sel.has('n'+c.l.id))continue;const l=S.leads.get(c.l.id);if(!l)continue;
