@@ -322,7 +322,7 @@ async function boot(){
   if(!db){clearTimeout(timer);setSync('bad','Database tidak tersedia di tampilan ini (login dulu ke claude.ai)');render();return}
   S.db=db;
   db.collection('leads').onSnapshot(snap=>{
-    S.leads=mergePend('leads',new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}])));S.loadedL=true;
+    S.leads=mergePend('leads',new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}])));GONE.forEach(id=>S.leads.delete(id));S.loadedL=true;
     if(!snap.metadata.fromCache){clearTimeout(timer);setSync('ok','Tersimpan otomatis')}
     render();if(S.open&&S.open.type==='lead'&&!S.open.dirty)refreshDrawer();
     if(S.role==='owner'&&!snap.metadata.fromCache){clearTimeout(S.awT);S.awT=setTimeout(autoWarm,800)}
@@ -336,15 +336,15 @@ async function boot(){
   try{S.dl=await window.claude.use('downloads')}catch(e){}
   try{S.sample=await window.claude.use('sample')}catch(e){}
 }
-const PEND={leads:new Map(),reach:new Map()};
+const PEND={leads:new Map(),reach:new Map()};const GONE=new Set();/* lead yang sedang/sudah dihapus: jangan muncul lagi dari snapshot lama */
 function mergePend(k,m){PEND[k].forEach((d,id)=>{const sv=m.get(id);if(!sv||(sv.updatedAt||'')<(d.updatedAt||''))m.set(id,d);else PEND[k].delete(id)});return m}
 async function withRetry(fn){let e;for(const w of [0,1500,4000]){if(w)await new Promise(r=>setTimeout(r,w));try{return await fn()}catch(x){e=x;if(['quota_exceeded','not_granted','permission_denied'].includes(x&&x.code))break}}throw e}
 async function saveLead(l){if(!S.db){toast('Database belum tersambung');return false}
   const {id,...body}=l;body.updatedAt=new Date().toISOString();
   if(body.stage==='cold'&&(String(body.phone||'').trim()||String(body.email||'').trim())){body.stage='warm';body.active=true;body.nextAction=NEXT_ACTION.warm;if(!body.nextFu||body.nextFu>addDays(1))body.nextFu=addDays(1);body.history=[...(body.history||[]),{d:todayStr(),t:'Ada no/email → otomatis pindah ke Warm'}]}
   if(body.stage==='lost'&&!String(body.phone||'').trim()&&!String(body.email||'').trim()){/* Lost tanpa no/email: tidak disimpan di Database, langsung dihapus */
-    try{await withRetry(()=>S.db.doc('leads/'+id).delete());S.leads.delete(id);PEND.leads.delete(id);if(S.open&&S.open.id===id){S.open=null;$('#drawerHost').innerHTML=''}
-      for(const r of [...S.reach.values()].filter(r=>r.leadId===id))await saveReach({...r,leadId:''});toast((body.name||body.company||'Lead')+': lost permanen (tidak ada no/email)');return true}catch(e){toast('Gagal menghapus, coba lagi');return false}}
+    const prev=S.leads.get(id);GONE.add(id);S.leads.delete(id);PEND.leads.delete(id);if(S.open&&S.open.id===id){S.open=null;$('#drawerHost').innerHTML=''}render();toast((body.name||body.company||'Lead')+': lost permanen (tidak ada no/email)');
+    try{await withRetry(()=>S.db.doc('leads/'+id).delete());Promise.all([...S.reach.values()].filter(r=>r.leadId===id).map(r=>saveReach({...r,leadId:''}))).catch(()=>{});return true}catch(e){GONE.delete(id);if(prev){S.leads.set(id,prev);render()}toast('Gagal menghapus, coba lagi');return false}}
   try{await withRetry(()=>S.db.doc('leads/'+id).set(body));S.leads.set(id,{id,...body});PEND.leads.set(id,{id,...body});return true}catch(e){S.saveFails=(S.saveFails||0)+1;toast(e.code==='quota_exceeded'?'Database penuh: hapus lead lama dulu':'Gagal menyimpan, coba lagi');return false}}
 async function patchLead(id,patch){const l=S.leads.get(id);if(!l)return;const n={...l,...patch};if(await saveLead(n)){render();if(S.open?.id===id)refreshDrawer()}}
 let dailyBusy=false;

@@ -48,17 +48,20 @@
 
   /* ---------- Database: koleksi dokumen + realtime ---------- */
   const mkSnap=m=>({docs:[...m.entries()].map(([id,data])=>({id,data:()=>data})),metadata:{fromCache:false}});
+  const LIVE={};
   const db={
-    collection(c){return {onSnapshot(cb,err){const m=new Map();let alive=true;
+    collection(c){return {onSnapshot(cb,err){const m=new Map();let alive=true;const L={m,cb:()=>{if(alive)cb(mkSnap(m))}};(LIVE[c]=LIVE[c]||new Set()).add(L);
       (async()=>{let from=0;const N=1000;try{for(;;){const {data,error}=await sb.from('docs').select('id,data').eq('collection',c).range(from,from+N-1);if(error)throw error;data.forEach(r=>m.set(r.id,r.data));if(data.length<N)break;from+=N}
         if(alive)cb(mkSnap(m))}catch(e){err&&err({code:e.code||'error',message:e.message})}})();
       const ch=sb.channel('docs-'+c).on('postgres_changes',{event:'*',schema:'public',table:'docs',filter:'collection=eq.'+c},pl=>{
-        if(pl.eventType==='DELETE'){m.delete(pl.old.id)}else{m.set(pl.new.id,pl.new.data)}if(alive)cb(mkSnap(m))}).subscribe();
-      return ()=>{alive=false;sb.removeChannel(ch)}}}},
+        if(pl.eventType==='DELETE'){m.delete(pl.old.id)}else{m.set(pl.new.id,pl.new.data)}if(alive)cb(mkSnap(m))})
+        /* event DELETE tidak bisa difilter per collection di Supabase, jadi didengar tanpa filter */
+        .on('postgres_changes',{event:'DELETE',schema:'public',table:'docs'},pl=>{const o=pl.old||{};if(o.collection===c&&m.has(o.id)){m.delete(o.id);if(alive)cb(mkSnap(m))}}).subscribe();
+      return ()=>{alive=false;LIVE[c]&&LIVE[c].delete(L);sb.removeChannel(ch)}}}},
     doc(path){const i=path.indexOf('/');const c=path.slice(0,i),id=path.slice(i+1);return {
       async set(data){const {error}=await sb.from('docs').upsert({collection:c,id,data,updated_at:new Date().toISOString()});if(error)throw error},
       async update(data){const {data:cur}=await sb.from('docs').select('data').eq('collection',c).eq('id',id).maybeSingle();const {error}=await sb.from('docs').upsert({collection:c,id,data:{...(cur&&cur.data||{}),...data},updated_at:new Date().toISOString()});if(error)throw error},
-      async delete(){const {error}=await sb.from('docs').delete().eq('collection',c).eq('id',id);if(error)throw error},
+      async delete(){const {error}=await sb.from('docs').delete().eq('collection',c).eq('id',id);if(error)throw error;(LIVE[c]||[]).forEach(L=>{if(L.m.delete(id))L.cb()})},
       async get(){const {data}=await sb.from('docs').select('data').eq('collection',c).eq('id',id).maybeSingle();return {exists:!!data,id,data:()=>data&&data.data}}}}};
 
   /* ---------- Pengguna & peran ---------- */
