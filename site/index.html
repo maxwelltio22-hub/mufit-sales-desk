@@ -416,7 +416,7 @@ async function boot(){
   if(!db){clearTimeout(timer);setSync('bad','Database tidak tersedia di tampilan ini (login dulu ke claude.ai)');render();return}
   S.db=db;
   db.collection('leads').onSnapshot(snap=>{
-    S.leads=mergePend('leads',new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}])));GONE.forEach(id=>S.leads.delete(id));S.loadedL=true;
+    S.leads=mergePend('leads',new Map(snap.docs.map(d=>{const x={id:d.id,...d.data()};if(x.stage==='cold')x.temp='';return [d.id,x]})));GONE.forEach(id=>S.leads.delete(id));S.loadedL=true;
     if(!snap.metadata.fromCache){clearTimeout(timer);setSync('ok','Tersimpan otomatis')}
     render();if(S.open&&S.open.type==='lead'&&!S.open.dirty)refreshDrawer();
     if(S.role==='owner'&&!snap.metadata.fromCache){clearTimeout(S.awT);S.awT=setTimeout(autoWarm,800)}
@@ -434,7 +434,7 @@ const PEND={leads:new Map(),reach:new Map()};const GONE=new Set();/* lead yang s
 function mergePend(k,m){PEND[k].forEach((d,id)=>{const sv=m.get(id);if(!sv||(sv.updatedAt||'')<(d.updatedAt||''))m.set(id,d);else PEND[k].delete(id)});return m}
 async function withRetry(fn){let e;for(const w of [0,1500,4000]){if(w)await new Promise(r=>setTimeout(r,w));try{return await fn()}catch(x){e=x;if(['quota_exceeded','not_granted','permission_denied'].includes(x&&x.code))break}}throw e}
 async function saveLead(l){if(!S.db){toast('Database belum tersambung');return false}
-  const {id,...body}=l;body.updatedAt=new Date().toISOString();
+  const {id,...body}=l;body.updatedAt=new Date().toISOString();if(body.stage==='cold')body.temp='';/* Cold LinkedIn: suhu selalu kosong (-) */
   if(body.stage==='cold'&&(String(body.phone||'').trim()||String(body.email||'').trim())){body.stage='warm';body.active=true;body.nextAction=NEXT_ACTION.warm;if(!body.nextFu||body.nextFu>addDays(1))body.nextFu=addDays(1);body.history=[...(body.history||[]),{d:todayStr(),t:'Ada no/email → otomatis pindah ke Warm'}]}
   if(body.stage==='lost'&&!String(body.phone||'').trim()&&!String(body.email||'').trim()){/* Lost tanpa no/email: tidak disimpan di Database, langsung dihapus */
     const prev=S.leads.get(id);GONE.add(id);S.leads.delete(id);PEND.leads.delete(id);if(S.open&&S.open.id===id){S.open=null;$('#drawerHost').innerHTML=''}render();toast((body.name||body.company||'Lead')+': lost permanen (tidak ada no/email)');
@@ -659,7 +659,7 @@ function vLeads(el){
     <label class="chip" style="cursor:pointer;padding:6px 10px"><input type="checkbox" id="lnf" ${f.nofu?'checked':''}> Belum ada jadwal FU</label>
    </div>
    <div class="table-scroll"><table><thead><tr><th></th>${th('row','No')}${th('name','Nama')}${th('company','Perusahaan')}${th('stage','Tahap')}<th>Suhu</th>${th('nextFu','Next FU')}<th>Next action</th><th>Kontak</th>${th('lastContact','Kontak terakhir')}</tr></thead>
-   <tbody>${list.slice(0,400).map(l=>`<tr data-id="${esc(l.id)}"><td>${l.active?'<span class="chip" title="Sedang ada di List follow-up">Di-follow up</span>':`<button class="btn sm primary" data-activate="${esc(l.id)}">Mulai</button>`}</td><td class="num">${l.row||'Baru'}</td><td><b>${esc(l.name)}</b><small>${esc(l.title||l.source||'')}</small></td><td>${esc(l.company)}<small>${esc(l.industry)}</small></td><td>${stChip(l.stage)}</td><td>${tempChip(l.temp)}</td><td class="num">${fuChip(l)}</td><td>${esc(l.nextAction)}</td><td><small>${esc(l.phone)}</small><small>${esc(l.email)}</small></td><td class="num">${esc(fmt(l.lastContact))}</td></tr>`).join('')}</tbody></table></div>
+   <tbody>${list.slice(0,400).map(l=>`<tr data-id="${esc(l.id)}"><td>${l.active?'<span class="chip" title="Sedang ada di List follow-up">Di-follow up</span>':`<button class="btn sm primary" data-activate="${esc(l.id)}">Mulai</button>`}</td><td class="num">${l.row||'Baru'}</td><td><b>${esc(l.name)}</b><small>${esc(l.title||l.source||'')}</small></td><td>${esc(l.company)}<small>${esc(l.industry)}</small></td><td>${stChip(l.stage)}</td><td>${tempChip(l.temp)||'<span class="muted">-</span>'}</td><td class="num">${fuChip(l)}</td><td>${esc(l.nextAction)}</td><td><small>${esc(l.phone)}</small><small>${esc(l.email)}</small></td><td class="num">${esc(fmt(l.lastContact))}</td></tr>`).join('')}</tbody></table></div>
    ${list.length===0?'<div class="empty" style="margin-top:10px">Tidak ada lead yang cocok dengan filter ini.</div>':''}`;
   const re=()=>vLeads(el);
   $('#lq').oninput=e=>{f.q=e.target.value;const p=e.target.selectionStart;re();const n=$('#lq');n.focus();n.setSelectionRange(p,p)};
