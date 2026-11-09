@@ -699,6 +699,9 @@ function drawLead(){
   $('#actTxt').onkeydown=e=>{if(e.key==='Enter'){const t=e.target.value.trim();if(t)logAct(t)}};
   const save=async()=>{if(!l.name&&!l.company){toast('Isi nama PIC atau perusahaan dulu');return}
     let auto=false;if(l.stage==='cold'&&(String(l.phone||'').trim()||String(l.email||'').trim())){auto=true;l.stage='warm';l.active=true;l.nextAction=NEXT_ACTION.warm;if(!l.nextFu||l.nextFu>addDays(1))l.nextFu=addDays(1);l.history=[...(l.history||[]),{d:todayStr(),t:'Kasih no/email → otomatis pindah ke Warm'}]}
+    if(o.isNew){const ex=findLead(l);if(ex&&ex.id!==l.id){/* sudah ada: jangan bikin lead baru, gabungkan info baru ke lead lama */
+      const m={...ex};for(const k of ['name','sapaan','title','company','industry','phone','email','instagram','linkedin'])if(!String(m[k]||'').trim()&&String(l[k]||'').trim())m[k]=l[k];if(l.notes&&!String(m.notes||'').includes(l.notes))m.notes=[m.notes,l.notes].filter(Boolean).join('\n');m.history=[...(m.history||[]),{d:todayStr(),t:'Ditambah lagi (sudah ada di data) → info digabung, tidak dibuat baru'}];
+      if(await saveLead(m)){toast('Sudah ada di data ('+(m.name||m.company)+', '+(SMAP[m.stage]?.n||m.stage)+'). Info baru digabung, tidak dibuat dobel');render();openLead(m.id)}return}}
     if(await saveLead(l)){o.isNew=false;o.dirty=false;toast(auto?'Ada no/email, otomatis pindah ke Warm':'Tersimpan');render();drawLead()}};
   $('#dSave').onclick=save;
   if($('#dDel'))$('#dDel').onclick=()=>{$('#delWrap').innerHTML=`<span class="confirm">Hapus permanen? <button class="btn sm danger" id="dDelY">Ya, hapus</button><button class="btn sm" id="dDelN">Batal</button></span>`;
