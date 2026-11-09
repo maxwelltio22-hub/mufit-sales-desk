@@ -751,14 +751,14 @@ async function addReach(rows,date){let ok=0;for(const r of rows){const id='R'+Da
   toast(ok+' reach out disimpan');render()}
 function leadFromReach(r,extra){const id='L'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
   return {id,name:r.name,sapaan:'',title:r.title||'',company:r.company||'',industry:'',type:'Wellness',source:'LinkedIn',channels:['LinkedIn'],email:'',phone:'',instagram:'',linkedin:r.linkedin||'',stage:'cold',temp:'',nextAction:'Minta nomor WA/email',nextFu:addDays(2),lastContact:todayStr(),value:0,meeting:false,notes:r.note||'',history:[{d:todayStr(),t:'Membalas reach out LinkedIn (dikirim '+fmt(r.date)+')'}],createdAt:todayStr(),origin:'Reach out',active:true,...extra}}
-async function reachReplied(r){let lid=r.leadId;if(!lid||!S.leads.get(lid)){const l=leadFromReach(r,{});if(!await saveLead(l))return;lid=l.id}
+async function reachReplied(r){const ex=leadOf(r);let lid=ex&&ex.id;if(ex&&ex.stage==='lost'&&!ex.active){await saveLead({...ex,stage:'cold',active:true,history:[...(ex.history||[]),{d:todayStr(),t:'Membalas lagi di LinkedIn → LinkedIn (cold)'}]})}if(!lid){const l=leadFromReach(r,{});if(!await saveLead(l))return;lid=l.id}
   if(await saveReach({...r,status:'replied',replyDate:r.replyDate||todayStr(),leadId:lid})){toast('Masuk List follow-up → LinkedIn (cold)');render()}}
-async function reachContact(r,phone,email){let l=r.leadId&&S.leads.get(r.leadId);const h={d:todayStr(),t:'Kasih '+[phone&&'no WA',email&&'email'].filter(Boolean).join(' & ')+' → pindah ke Warm'};
-  if(l){l={...l,phone:phone||l.phone,email:email||l.email,stage:'warm',active:true,nextAction:NEXT_ACTION.warm,nextFu:addDays(1),history:[...(l.history||[]),h]}}
+async function reachContact(r,phone,email){let l=leadOf({...r,phone,email});const h={d:todayStr(),t:'Kasih '+[phone&&'no WA',email&&'email'].filter(Boolean).join(' & ')+' → pindah ke Warm'};
+  if(l){const up=SRANK[l.stage]>SRANK.warm;l={...l,phone:phone||l.phone,email:email||l.email,stage:up?l.stage:'warm',active:true,nextAction:up?l.nextAction:NEXT_ACTION.warm,nextFu:up?l.nextFu:addDays(1),history:[...(l.history||[]),h]}}
   else{l=leadFromReach(r,{phone,email,stage:'warm',nextAction:NEXT_ACTION.warm,nextFu:addDays(1)});l.history.push(h)}
   if(!await saveLead(l))return;if(await saveReach({...r,status:'contact',replyDate:r.replyDate||todayStr(),leadId:l.id})){toast('Masuk Database & List follow-up → Warm');render()}}
 async function reachNo(r){/* membalas tapi tidak tertarik: tetap masuk List follow-up → LinkedIn (cold), ranking-nya paling bawah */
-  let l=r.leadId&&S.leads.get(r.leadId);const d=r.replyDate||todayStr();const li={liStatus:'tidak_tertarik',liMinat:1,liReply:d,liNote:String(r.note||'').slice(0,240),liAt:todayStr()};
+  let l=leadOf(r);const d=r.replyDate||todayStr();const li={liStatus:'tidak_tertarik',liMinat:1,liReply:d,liNote:String(r.note||'').slice(0,240),liAt:todayStr()};
   if(!l){l=leadFromReach(r,{...li,nextFu:addDays(30),nextAction:'Tidak tertarik saat ini, sapa lagi nanti'});l.history.push({d:todayStr(),t:'Membalas tapi tidak tertarik → tetap di LinkedIn (cold)'});if(!await saveLead(l))return}
   else if(l.stage==='cold'||l.stage==='lost'){l={...l,...li,stage:'cold',active:true,nextFu:l.nextFu||addDays(30),history:[...(l.history||[]),{d:todayStr(),t:'Membalas tapi tidak tertarik → tetap di LinkedIn (cold)'}]};if(!await saveLead(l))return}
   else{await saveLead({...l,history:[...(l.history||[]),{d:todayStr(),t:'Balasan LinkedIn: tidak tertarik'+(r.note?' ('+String(r.note).slice(0,120)+')':'')}]})}
@@ -908,8 +908,16 @@ function parseClaude(txt){return parseAll(txt)[0]}
 function parseOne(o){const arr=k=>(Array.isArray(o[k])?o[k]:[]).map(p=>({name:String(p.nama||p.name||'').trim(),title:String(p.jabatan||p.title||'').trim(),company:String(p.perusahaan||p.company||'').trim(),linkedin:String(p.linkedin||'').trim(),phone:String(p.wa||p.phone||p.no||'').trim(),email:String(p.email||'').trim(),note:String(p.ringkasan||p.catatan||'').trim()})).filter(p=>p.name||p.linkedin);
 const d=/^\d{4}-\d{2}-\d{2}$/.test(o.tanggal||'')?o.tanggal:todayStr();
   arr.reach=arr('reach_out');return {date:d,reach:arr('reach_out'),rep:arr('membalas'),con:arr('kasih_kontak'),no:arr('tidak_tertarik')}}
-function findReach(p){const s=liSlug(p.linkedin),n=nrm(p.name);return [...S.reach.values()].find(r=>(s&&liSlug(r.linkedin)===s)||(n&&nrm(r.name)===n&&(!p.company||!r.company||nrm(r.company)===nrm(p.company))))}
-function findLead(p){const s=liSlug(p.linkedin),n=nrm(p.name);return [...S.leads.values()].find(l=>(s&&liSlug(l.linkedin)===s)||(n&&nrm(l.name)===n&&(!p.company||!l.company||nrm(l.company).includes(nrm(p.company))||nrm(p.company).includes(nrm(l.company)))))}
+/* pengenal orang yang sama: link LinkedIn, no/email, atau nama mirip (abaikan gelar setelah koma, typo 1 huruf, nama dipotong) + perusahaan cocok */
+const nmCore=x=>String(x||'').split(/[,|(]/)[0].trim();
+function samePerson(a,b,ca,cb){const x=nmCore(a),y=nmCore(b);if(sameName(x,y))return coMatch(ca,cb);
+  const wx=x.toLowerCase().split(/\s+/).filter(Boolean),wy=y.toLowerCase().split(/\s+/).filter(Boolean);const [s1,l1]=wx.length<=wy.length?[wx,wy]:[wy,wx];
+  return s1.length>=2&&s1.every((w,k)=>nrm(w)===nrm(l1[k]))&&nrm(ca)&&nrm(cb)&&coMatch(ca,cb)}
+function findReach(p){const s=liSlug(p.linkedin);const all=[...S.reach.values()];return (s&&all.find(r=>liSlug(r.linkedin)===s))||all.find(r=>!(s&&liSlug(r.linkedin)&&liSlug(r.linkedin)!==s)&&samePerson(p.name,r.name,p.company,r.company))}
+function findLead(p){const s=liSlug(p.linkedin),ph=phN(p.phone),em=String(p.email||'').trim().toLowerCase();const all=[...S.leads.values()].filter(l=>!GONE.has(l.id));
+  const hit=all.filter(l=>(s&&liSlug(l.linkedin)===s)||(ph&&phN(l.phone)===ph)||(em&&String(l.email||'').trim().toLowerCase()===em)||(!(s&&liSlug(l.linkedin)&&liSlug(l.linkedin)!==s)&&samePerson(p.name,l.name,p.company,l.company)));
+  return hit.sort((a,b)=>leadScore(b)-leadScore(a))[0]}
+const leadOf=r=>(r.leadId&&S.leads.get(r.leadId))||findLead(r);
 async function ensureReach(p,date){let r=findReach(p);if(r)return r;const lead=findLead(p);const id='R'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
   r={id,date,untracked:true,status:'sent',replyDate:'',note:p.note||'',leadId:lead?lead.id:'',name:p.name||slugName(p.linkedin),title:p.title,company:p.company,linkedin:p.linkedin};if(!await saveReach(r))return null;return S.reach.get(id)||{...r}}
 async function markDay(id,d){const c=S.reach.get(id);if(!c||!isReply(c))return;const ds=rDaysAll(c);if(!ds.includes(d))await saveReach({...c,replyDays:[...ds,d].sort()});else if(!Array.isArray(c.replyDays))await saveReach({...c,replyDays:ds})}
