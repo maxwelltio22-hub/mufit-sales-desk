@@ -587,10 +587,10 @@ function vToday(el){
   <div class="fu-help"><p class="sub" style="margin:0">Semua lead di List follow-up (Warm ke atas) yang belum di-FU muncul di sini. Lead LinkedIn (cold) ada di bagian <b>Ranking LinkedIn</b> di bawah. Klik <b>Sudah FU</b> setelah kamu follow up: Warm/Hot dijadwalkan lagi 1 minggu, LinkedIn (cold) pilih 2 minggu atau 1 bulan. Lead baru muncul lagi di sini saat jadwalnya tiba.</p>${S.role==='owner'?`<button class="btn sm ${S.rstArm?'primary':'ghost'}" id="fuReset">${S.rstArm?'Yakin? Klik lagi untuk reset':'Reset jadwal FU'}</button>`:''}</div>
   ${grp('Terlambat dari jadwal',lateW,'late')}${grp('Perlu di-FU',due,'due')}
   ${!lateW.length&&!due.length?'<div class="empty">Semua lead Warm ke atas sudah di-follow up sesuai jadwal. 🎉</div>':''}
-  <section class="group rank"><div class="rank-h"><h2>Ranking LinkedIn (cold) <span class="count">${coldRank.length}</span></h2><div class="spacer"></div><button class="btn sm primary" id="liUpd">Update catatan dari LinkedIn</button></div>
+  <section class="group rank"><div class="rank-h"><h2>Ranking LinkedIn (cold) <span class="count">${coldRank.length}</span></h2><div class="spacer"></div><button class="btn sm" id="liBulkFu">Salin untuk bulk FU (Claude)</button><button class="btn sm primary" id="liUpd">Update catatan dari LinkedIn</button></div>
    <p class="sub" style="margin:0 0 10px;font-size:13px">Diurutkan otomatis dari yang paling perlu kamu follow up hari ini: minat dari isi chat, kapan terakhir membalas, Hot, dan jadwal FU. ${liAt?'Catatan LinkedIn terakhir diperbarui <b>'+esc(fmt(liAt))+'</b>.':'Klik <b>Update catatan dari LinkedIn</b> supaya ranking membaca isi chat tiap orang.'}</p>
    ${coldRank.length?`<div class="list">${coldRank.map(l=>rowHtml(l,needFu(l)?(fuState(l)==='late'?'late':'due'):'')).join('')}</div>`:'<div class="empty">Tidak ada lead LinkedIn (cold) aktif.</div>'}</section>`;
-  if($('#liUpd'))$('#liUpd').onclick=openLiNotes;
+  if($('#liUpd'))$('#liUpd').onclick=openLiNotes;if($('#liBulkFu'))$('#liBulkFu').onclick=openBulkFu;
   if($('#fuReset'))$('#fuReset').onclick=()=>{if(S.rstArm)resetFu();else{S.rstArm=true;render();setTimeout(()=>{if(S.rstArm){S.rstArm=false;render()}},5000)}};
   bindRows(el);bindPlan(el);bindBossRows(el);
   el.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>bumpDaily(b.dataset.d,+b.dataset.v));
@@ -1167,6 +1167,74 @@ function openLiNotes(){const host=$('#drawerHost');let P=null;const n=coldLeads(
     for(const x of P.ok){const l=S.leads.get(x.l.id);if(!l)continue;if(await saveLead({...l,liMinat:x.minat,liStatus:x.status,liReply:x.reply,liNote:x.note,liSaran:x.saran,liAt:P.date}))k++}
     toast(k+' catatan LinkedIn tersimpan, ranking diperbarui');close();render()};
   setTimeout(()=>$('#liTxt').focus(),30)}
+/* ---------- Bulk follow-up LinkedIn (cold) lewat Claude di Chrome ---------- */
+function bulkFuList(withNo){const L=coldLeads().filter(l=>withNo||l.liStatus!=='tidak_tertarik');const P=S.prioMap||new Map();return L.sort((a,b)=>((P.get(a.id)||{}).rank||999)-((P.get(b.id)||{}).rank||999))}
+function bulkFuPrompt(L){const t=todayStr();
+  const rows=L.map((l,i)=>`${i+1}. ${l.name||'(tanpa nama)'}${l.title?' | '+l.title:''}${l.company?' | '+l.company:''}${l.linkedin?' | '+l.linkedin:''}${l.sapaan?' | sapaan: '+l.sapaan:''}${l.lastFu?' | FU terakhir: '+l.lastFu:''}${l.liNote?' | catatan: '+l.liNote:''}${l.liSaran?' | saran: '+l.liSaran:''}`).join('\n');
+  return `Tugasmu: bantu saya (Max, MUFIT Indonesia, corporate wellness) follow up ${L.length} prospek LinkedIn di bawah. Semuanya sudah pernah membalas reach out saya tapi BELUM memberi nomor WhatsApp atau email. Tujuan follow up: mendapatkan nomor WA atau email mereka.
+
+Hari ini: ${t}.
+
+CARA KERJA
+1. Kerjakan berurutan dari nomor 1 (sudah diurutkan dari yang paling penting). Maksimal 15 orang sekali jalan.
+2. Untuk tiap orang, buka chat-nya di LinkedIn: dari link profil klik "Message", atau cari namanya di inbox. Baca 3–5 pesan terakhir.
+3. LEWATI orang itu (jangan kirim apa pun) kalau:
+   - pesan terakhir dari saya dikirim kurang dari 3 hari lalu dan belum dibalas,
+   - ia sudah memberi nomor WA/email di chat (catat nomor/emailnya persis),
+   - ia jelas menolak / minta tidak dihubungi lagi,
+   - chat-nya tidak ketemu.
+4. Untuk yang tidak dilewati, tulis pesan follow up yang MENJAWAB isi balasan terakhir orang itu. JANGAN pakai template atau kalimat yang sama untuk semua orang. Baca dulu apa yang ia tulis, lalu tanggapi itu secara spesifik, baru arahkan ke nomor WA/email. Contoh arah (bukan kalimat untuk disalin):
+   - Minta company profile / proposal / contoh program → bilang akan dikirim, lalu tanyakan mau dikirim ke WA atau email mana.
+   - Tanya harga / detail program → jawab singkat bahwa paketnya menyesuaikan kebutuhan, lalu tawarkan diskusi singkat via WA atau call.
+   - Bilang "nanti dulu" / belum ada budget / timing (mis. tahun depan) → hormati timing-nya, tawarkan kirim materi untuk referensi nanti via email.
+   - Hanya bilang terima kasih / emoji / "boleh" → tanyakan kebutuhan wellness di kantornya dengan satu pertanyaan ringan, lalu minta WA/email.
+   - Bertanya balik soal MUFIT → jawab pertanyaannya dulu.
+   Gaya: sopan, natural seperti chat biasa, 2–3 kalimat, bahasa Indonesia. Sapa dengan "Pak/Bu" HANYA kalau sapaan tertulis di daftar; kalau tidak, sapa dengan nama depannya saja. Pakai catatan di daftar sebagai konteks tambahan, tapi isi chat terbaru yang paling menentukan.
+5. JANGAN langsung kirim. Tunjukkan dulu draft per 5 orang (nama + draft). Kirim hanya setelah saya balas "kirim". Kalau saya minta ubah, ubah dulu.
+6. Jangan mengirim ke orang yang tidak ada di daftar, dan jangan mengirim lebih dari satu pesan per orang.
+
+DAFTAR
+${rows}
+
+SETELAH SELESAI, balas dengan SATU blok JSON ini (untuk saya tempel ke MUFIT Sales Desk):
+{
+  "mufit_fu": 1,
+  "tanggal": "${t}",
+  "terkirim": [{"nama": "", "linkedin": ""}],
+  "kasih_kontak": [{"nama": "", "linkedin": "", "wa": "", "email": "", "ringkasan": ""}],
+  "tidak_tertarik": [{"nama": "", "linkedin": "", "ringkasan": ""}],
+  "dilewati": [{"nama": "", "alasan": ""}]
+}
+Kosongkan array yang tidak ada isinya. Jangan mengarang data. Lalu tulis "Sisa: N orang belum dikerjakan" kalau daftarnya belum habis.`}
+function parseBulkFu(txt){const out={sent:[],con:[],no:[],skip:[],miss:[],date:todayStr()};for(const b of jsonBlocks(String(txt||'').replace(/```(?:json)?/gi,''))){let o;try{o=JSON.parse(b)}catch(e){continue}if(!o||!o.mufit_fu)continue;if(/^\d{4}-\d{2}-\d{2}$/.test(o.tanggal||''))out.date=o.tanggal;
+  const A=k=>Array.isArray(o[k])?o[k]:[];const nm=p=>String(p.nama||p.name||'').trim();
+  for(const p of A('terkirim')){const l=findColdAll(nm(p),p.linkedin)||findLead({name:nm(p),linkedin:p.linkedin});(l?out.sent:out.miss).push({l,name:nm(p)})}
+  for(const p of A('kasih_kontak')){const phone=String(p.wa||p.phone||'').trim(),email=String(p.email||'').trim();if(!phone&&!email)continue;const l=findColdAll(nm(p),p.linkedin)||findLead({name:nm(p),linkedin:p.linkedin});(l?out.con:out.miss).push({l,name:nm(p),phone,email,note:String(p.ringkasan||'').trim()})}
+  for(const p of A('tidak_tertarik')){const l=findColdAll(nm(p),p.linkedin)||findLead({name:nm(p),linkedin:p.linkedin});(l?out.no:out.miss).push({l,name:nm(p),note:String(p.ringkasan||'').trim()})}
+  for(const p of A('dilewati'))out.skip.push({name:nm(p),why:String(p.alasan||'').trim()})}return out}
+function openBulkFu(){const host=$('#drawerHost');let withNo=false,P=null;
+  const draw=()=>{const L=bulkFuList(withNo);const nNo=coldLeads().filter(l=>l.liStatus==='tidak_tertarik').length;
+  host.innerHTML=`<div class="scrim" id="scrim"></div><aside class="drawer" role="dialog" aria-label="Bulk follow-up LinkedIn"><div class="d-head"><div style="flex:1"><h1>Bulk follow-up LinkedIn (cold)</h1><p class="sub">Salin semua lead LinkedIn (cold) beserta catatannya ke Claude di Chrome. Claude membaca chat tiap orang dan menyiapkan balasan follow up sesuai jawaban terakhirnya (bukan template) untuk minta no WA/email, dan baru mengirim setelah kamu bilang "kirim".</p></div><button class="btn ghost" id="dClose" aria-label="Tutup">✕</button></div>
+   <div class="d-body"><section class="sec"><h2>1. Salin prompt + daftar</h2><p class="sub" style="font-size:12.5px"><b>${L.length}</b> lead, urut sesuai Ranking LinkedIn.${nNo?` ${withNo?'Termasuk':'Tidak termasuk'} ${nNo} yang tidak tertarik.`:''}</p>
+   ${nNo?`<label class="sub" style="font-size:12.5px;display:flex;gap:6px;align-items:center;margin:0 0 8px"><input type="checkbox" id="bfNo" ${withNo?'checked':''} style="width:auto"> Ikutkan yang tidak tertarik</label>`:''}
+   <div class="quick"><button class="btn sm primary" id="cpBf">Salin prompt</button><button class="btn sm" id="cpBfList">Salin daftar saja</button></div>
+   <p class="sub" style="font-size:12px;margin:8px 0 0">Claude mengerjakan maksimal 15 orang sekali jalan. Kalau belum habis, bilang "lanjut" di Claude.</p></section>
+   <section class="sec"><h2>2. Tempel hasil JSON Claude</h2><p class="sub" style="font-size:12.5px">Yang terkirim ditandai "✓ Sudah FU" (FU berikutnya 2 minggu lagi). Yang kasih no/email pindah ke Warm. Yang menolak ditandai tidak tertarik.</p><textarea id="bfTxt" rows="8" placeholder='{"mufit_fu":1,"tanggal":"…","terkirim":[…]}'></textarea><div id="bfPrev"></div></section></div>
+   <div class="d-foot"><button class="btn primary" id="bfGo" disabled>Simpan hasil FU</button></div></aside>`;
+  S.open={type:'bulkfu'};const close=()=>{S.open=null;host.innerHTML=''};$('#scrim').onclick=close;$('#dClose').onclick=close;
+  if($('#bfNo'))$('#bfNo').onchange=e=>{withNo=e.target.checked;draw()};
+  $('#cpBf').onclick=()=>copy(bulkFuPrompt(L));$('#cpBfList').onclick=()=>copy(bulkFuPrompt(L).split('DAFTAR\n')[1].split('\n\nSETELAH')[0]);
+  $('#bfTxt').oninput=e=>{const v=e.target.value,pv=$('#bfPrev'),g=$('#bfGo');if(!v.trim()){P=null;pv.innerHTML='';g.disabled=true;return}P=parseBulkFu(v);
+    const sec=(t,a,f)=>a.length?`<p style="margin:10px 0 4px"><b>${t} (${a.length})</b></p><div style="font-size:12.5px">${a.map(f).join('<br>')}</div>`:'';
+    const n=P.sent.length+P.con.length+P.no.length;
+    pv.innerHTML=(n||P.skip.length||P.miss.length)?sec('Terkirim → ✓ Sudah FU',P.sent,x=>esc(x.l.name))+sec('Kasih no/email → Warm',P.con,x=>esc(x.l.name)+' · '+esc([x.phone,x.email].filter(Boolean).join(' / ')))+sec('Tidak tertarik',P.no,x=>esc(x.l.name))+sec('Dilewati Claude',P.skip,x=>esc(x.name)+(x.why?' · '+esc(x.why):''))+sec('Tidak cocok dengan data',P.miss,x=>esc(x.name)):'<p class="chip late" style="white-space:normal;margin-top:8px">Format belum terbaca. Pastikan yang ditempel adalah blok JSON "mufit_fu" dari Claude.</p>';
+    g.disabled=!n;g.textContent=n?'Simpan hasil FU ('+n+' lead)':'Simpan hasil FU'};
+  $('#bfGo').onclick=async()=>{if(!P)return;const g=$('#bfGo');g.disabled=true;g.textContent='Menyimpan…';let k=0;const t=P.date,seen=new Set();
+    for(const x of P.con){const l=S.leads.get(x.l.id);if(!l||seen.has(l.id))continue;seen.add(l.id);if(await saveLead({...l,phone:l.phone||x.phone,email:l.email||x.email,lastFu:t,lastContact:t,nextFu:addDays(1),history:[...(l.history||[]),{d:t,t:'Bulk FU LinkedIn: kasih '+[x.phone&&'no WA',x.email&&'email'].filter(Boolean).join(' & ')+(x.note?' ('+x.note.slice(0,120)+')':'')}]}))k++}
+    for(const x of P.no){const l=S.leads.get(x.l.id);if(!l||seen.has(l.id))continue;seen.add(l.id);if(await saveLead({...l,liStatus:'tidak_tertarik',liMinat:1,liNote:x.note||l.liNote,lastFu:t,lastContact:t,nextFu:addDays(30),history:[...(l.history||[]),{d:t,t:'Bulk FU LinkedIn: tidak tertarik'+(x.note?' ('+x.note.slice(0,120)+')':'')}]}))k++}
+    for(const x of P.sent){const l=S.leads.get(x.l.id);if(!l||seen.has(l.id))continue;seen.add(l.id);const nx=addDays(14);if(await saveLead({...l,lastFu:t,lastContact:t,nextFu:nx,history:[...(l.history||[]),{d:t,t:'Bulk FU LinkedIn terkirim (minta no WA/email). FU berikutnya '+fmt(nx)}]}))k++}
+    toast(k+' lead diperbarui dari bulk FU');close();render()};
+  };draw()}
 function openBulk(){const host=$('#drawerHost');const SP=coldSplit();const pre=()=>({con:SP.has.map(l=>({l,name:l.name,phone:l.phone,email:l.email,note:'Kontak sudah ada di data lead ini',pre:true})),no:[],miss:[],dup:SP.dup.map(x=>({...x}))});let B=pre();const sel=new Set();const preSel=()=>{B.con.forEach(c=>sel.add('c'+c.l.id));B.dup.forEach(c=>sel.add('d'+c.l.id))};preSel();
   host.innerHTML=`<div class="scrim" id="scrim"></div><aside class="drawer" role="dialog" aria-label="Cek kontak bulk"><div class="d-head"><div style="flex:1"><h1>Cek kontak (bulk)</h1><p class="sub">Semua lead LinkedIn (cold) yang sudah kasih no WA / email langsung pindah ke Warm sekaligus.</p></div><button class="btn ghost" id="dClose" aria-label="Tutup">✕</button></div>
    <div class="d-body"><section class="sec"><h2>1. Salin prompt untuk Claude di Chrome</h2><p class="sub" style="font-size:12.5px">Prompt hanya berisi <b>${SP.check.length}</b> lead cold yang belum punya kontak. ${SP.has.length+SP.dup.length?`${SP.has.length+SP.dup.length} lead lain tidak ikut dicek karena datanya sudah ada (lihat di bawah).`:''} Tempel ke Claude di Chrome saat LinkedIn terbuka.</p><div class="quick"><button class="btn sm primary" id="cpFu">Salin prompt</button></div></section>
