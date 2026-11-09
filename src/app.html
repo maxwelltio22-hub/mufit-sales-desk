@@ -473,7 +473,9 @@ function vToday(el){
   const due=need.filter(l=>fuState(l)!=='late'&&l.stage!=='cold').sort((a,b)=>(a.temp==='Hot'?0:1)-(b.temp==='Hot'?0:1)||SO.indexOf(a.stage)-SO.indexOf(b.stage)||(a.name||a.company||'').localeCompare(b.name||b.company||''));
   const lateW=late.filter(l=>l.stage!=='cold');
   const coldAll=all.filter(l=>l.stage==='cold');const PR=new Map(coldAll.map(l=>[l.id,prioOf(l)]));
-  const coldRank=coldAll.slice().sort((a,b)=>PR.get(b.id).s-PR.get(a.id).s||(a.name||'').localeCompare(b.name||''));
+  const coldSorted=coldAll.slice().sort((a,b)=>PR.get(b.id).s-PR.get(a.id).s||(a.name||'').localeCompare(b.name||''));
+  /* yang sudah di-FU dan jadwal berikutnya belum tiba keluar dari ranking (dan dari bulk FU) sampai jatuh tempo */
+  const coldRank=coldSorted.filter(needFu),coldDone=coldSorted.filter(l=>!needFu(l)).sort((a,b)=>(a.nextFu||'').localeCompare(b.nextFu||''));
   S.prioMap=new Map(coldRank.map((l,i)=>[l.id,{rank:i+1,...PR.get(l.id)}]));
   const liAt=coldAll.map(l=>l.liAt||'').filter(Boolean).sort().pop()||'';
   const ontrack=all.filter(l=>FU_STAGES.includes(l.stage)&&!needFu(l));
@@ -496,7 +498,8 @@ function vToday(el){
   ${!lateW.length&&!due.length?'<div class="empty">Semua lead Warm ke atas sudah di-follow up sesuai jadwal. 🎉</div>':''}
   <section class="group rank"><div class="rank-h"><h2>Ranking LinkedIn (cold) <span class="count">${coldRank.length}</span></h2><div class="spacer"></div><button class="btn sm" id="liBulkFu">Salin untuk bulk FU (Claude)</button><button class="btn sm primary" id="liUpd">Update catatan dari LinkedIn</button></div>
    <p class="sub" style="margin:0 0 10px;font-size:13px">Diurutkan otomatis dari yang paling perlu kamu follow up hari ini: minat dari isi chat, kapan terakhir membalas, Hot, dan jadwal FU. ${liAt?'Catatan LinkedIn terakhir diperbarui <b>'+esc(fmt(liAt))+'</b>.':'Klik <b>Update catatan dari LinkedIn</b> supaya ranking membaca isi chat tiap orang.'}</p>
-   ${coldRank.length?`<div class="list">${coldRank.map(l=>rowHtml(l,needFu(l)?(fuState(l)==='late'?'late':'due'):'')).join('')}</div>`:'<div class="empty">Tidak ada lead LinkedIn (cold) aktif.</div>'}</section>`;
+   ${coldRank.length?`<div class="list">${coldRank.map(l=>rowHtml(l,fuState(l)==='late'?'late':'due')).join('')}</div>`:'<div class="empty">Semua lead LinkedIn (cold) sudah di-follow up. Mereka muncul lagi saat jadwal FU berikutnya tiba.</div>'}
+   ${coldDone.length?`<details style="margin-top:10px"><summary class="sub" style="cursor:pointer;font-size:13px">Sudah di-FU, menunggu jadwal berikutnya (${coldDone.length})</summary><div class="list" style="margin-top:8px">${coldDone.map(l=>rowHtml(l,'')).join('')}</div></details>`:''}</section>`;
   if($('#liUpd'))$('#liUpd').onclick=openLiNotes;if($('#liBulkFu'))$('#liBulkFu').onclick=openBulkFu;
   if($('#fuReset'))$('#fuReset').onclick=()=>{if(S.rstArm)resetFu();else{S.rstArm=true;render();setTimeout(()=>{if(S.rstArm){S.rstArm=false;render()}},5000)}};
   bindRows(el);bindPlan(el);bindBossRows(el);
@@ -1109,7 +1112,7 @@ function openLiNotes(){const host=$('#drawerHost');let P=null;const n=coldLeads(
     toast(k+' catatan LinkedIn tersimpan, ranking diperbarui');close();render()};
   setTimeout(()=>$('#liTxt').focus(),30)}
 /* ---------- Bulk follow-up LinkedIn (cold) lewat Claude di Chrome ---------- */
-function bulkFuList(withNo){const L=coldLeads().filter(l=>withNo||l.liStatus!=='tidak_tertarik');const P=S.prioMap||new Map();return L.sort((a,b)=>((P.get(a.id)||{}).rank||999)-((P.get(b.id)||{}).rank||999))}
+function bulkFuList(withNo){const L=coldLeads().filter(l=>needFu(l)&&(withNo||l.liStatus!=='tidak_tertarik'));const P=S.prioMap||new Map();return L.sort((a,b)=>((P.get(a.id)||{}).rank||999)-((P.get(b.id)||{}).rank||999))}
 function bulkFuPrompt(L){const t=todayStr();
   const rows=L.map((l,i)=>`${i+1}. ${l.name||'(tanpa nama)'}${l.title?' | '+l.title:''}${l.company?' | '+l.company:''}${l.linkedin?' | '+l.linkedin:''}${l.sapaan?' | sapaan: '+l.sapaan:''}${l.lastFu?' | FU terakhir: '+l.lastFu:''}${l.liNote?' | catatan: '+l.liNote:''}${l.liSaran?' | saran: '+l.liSaran:''}`).join('\n');
   return `Tugasmu: bantu saya (Max, MUFIT Indonesia, corporate wellness) follow up ${L.length} prospek LinkedIn di bawah. Semuanya sudah pernah membalas reach out saya tapi BELUM memberi nomor WhatsApp atau email. Tujuan follow up: mendapatkan nomor WA atau email mereka.
@@ -1156,7 +1159,7 @@ function parseBulkFu(txt){const out={sent:[],con:[],no:[],skip:[],miss:[],date:t
 function openBulkFu(){const host=$('#drawerHost');let withNo=false,P=null;
   const draw=()=>{const L=bulkFuList(withNo);const nNo=coldLeads().filter(l=>l.liStatus==='tidak_tertarik').length;
   host.innerHTML=`<div class="scrim" id="scrim"></div><aside class="drawer" role="dialog" aria-label="Bulk follow-up LinkedIn"><div class="d-head"><div style="flex:1"><h1>Bulk follow-up LinkedIn (cold)</h1><p class="sub">Salin semua lead LinkedIn (cold) beserta catatannya ke Claude di Chrome. Claude membaca chat tiap orang dan menyiapkan balasan follow up sesuai jawaban terakhirnya (bukan template) untuk minta no WA/email, dan baru mengirim setelah kamu bilang "kirim".</p></div><button class="btn ghost" id="dClose" aria-label="Tutup">✕</button></div>
-   <div class="d-body"><section class="sec"><h2>1. Salin prompt + daftar</h2><p class="sub" style="font-size:12.5px"><b>${L.length}</b> lead, urut sesuai Ranking LinkedIn.${nNo?` ${withNo?'Termasuk':'Tidak termasuk'} ${nNo} yang tidak tertarik.`:''}</p>
+   <div class="d-body"><section class="sec"><h2>1. Salin prompt + daftar</h2><p class="sub" style="font-size:12.5px"><b>${L.length}</b> lead, urut sesuai Ranking LinkedIn. Yang sudah di-FU dan belum jatuh tempo tidak ikut.${nNo?` ${withNo?'Termasuk':'Tidak termasuk'} ${nNo} yang tidak tertarik.`:''}</p>
    ${nNo?`<label class="sub" style="font-size:12.5px;display:flex;gap:6px;align-items:center;margin:0 0 8px"><input type="checkbox" id="bfNo" ${withNo?'checked':''} style="width:auto"> Ikutkan yang tidak tertarik</label>`:''}
    <div class="quick"><button class="btn sm primary" id="cpBf">Salin prompt</button><button class="btn sm" id="cpBfList">Salin daftar saja</button></div>
    <p class="sub" style="font-size:12px;margin:8px 0 0">Claude mengerjakan maksimal 15 orang sekali jalan. Kalau belum habis, bilang "lanjut" di Claude.</p></section>
