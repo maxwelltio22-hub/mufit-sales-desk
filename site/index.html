@@ -425,7 +425,7 @@ async function boot(){
   db.collection('reach').onSnapshot(snap=>{S.reach=mergePend('reach',new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}])));if(['reach-out','dashboard','hari-ini','tugas-atasan','ringkasan'].includes(view()))render();else counts()},()=>{});
   db.collection('bossTasks').onSnapshot(snap=>{S.bossTasks=new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));render()},()=>{});
   db.collection('tasks').onSnapshot(snap=>{S.tasks=new Map(snap.docs.map(d=>[d.id,d.data()]));if(['hari-ini','tugas-atasan'].includes(view()))render()},()=>{});
-  db.collection('settings').onSnapshot(snap=>{const d=snap.docs.find(x=>x.id==='targets');S.targets=d?d.data():null;const r=snap.docs.find(x=>x.id==='fuReset');S.fuReset=r?(r.data().date||''):'';const di=snap.docs.find(x=>x.id==='dupIgnore');S.dupIgnore=di?(di.data().pairs||[]):[];render()},()=>{});
+  db.collection('settings').onSnapshot(snap=>{const d=snap.docs.find(x=>x.id==='targets');S.targets=d?d.data():null;const r=snap.docs.find(x=>x.id==='fuReset');S.fuReset=r?(r.data().date||''):'';const lr=snap.docs.find(x=>x.id==='liReport');S.liReport=lr?(lr.data().date||''):'';const di=snap.docs.find(x=>x.id==='dupIgnore');S.dupIgnore=di?(di.data().pairs||[]):[];render()},()=>{});
   db.collection('daily').onSnapshot(snap=>{S.daily=new Map(snap.docs.map(d=>[d.id,d.data()]));if(['hari-ini','dashboard','tugas-atasan','ringkasan'].includes(view()))render()},()=>{});
   try{S.dl=await window.claude.use('downloads')}catch(e){}
   try{S.sample=await window.claude.use('sample')}catch(e){}
@@ -851,8 +851,15 @@ async function reachContact(r,phone,email){let l=r.leadId&&S.leads.get(r.leadId)
   if(l){l={...l,phone:phone||l.phone,email:email||l.email,stage:'warm',active:true,nextAction:NEXT_ACTION.warm,nextFu:addDays(1),history:[...(l.history||[]),h]}}
   else{l=leadFromReach(r,{phone,email,stage:'warm',nextAction:NEXT_ACTION.warm,nextFu:addDays(1)});l.history.push(h)}
   if(!await saveLead(l))return;if(await saveReach({...r,status:'contact',replyDate:r.replyDate||todayStr(),leadId:l.id})){toast('Masuk Database & List follow-up → Warm');render()}}
-async function reachNo(r){const l=r.leadId&&S.leads.get(r.leadId);if(l)await saveLead({...l,stage:'lost',active:false,history:[...(l.history||[]),{d:todayStr(),t:'Tidak tertarik (balasan reach out)'}]});
-  if(await saveReach({...r,status:'no',replyDate:r.replyDate||todayStr()}))render()}
+async function reachNo(r){/* membalas tapi tidak tertarik: tetap masuk List follow-up → LinkedIn (cold), ranking-nya paling bawah */
+  let l=r.leadId&&S.leads.get(r.leadId);const d=r.replyDate||todayStr();const li={liStatus:'tidak_tertarik',liMinat:1,liReply:d,liNote:String(r.note||'').slice(0,240),liAt:todayStr()};
+  if(!l){l=leadFromReach(r,{...li,nextFu:addDays(30),nextAction:'Tidak tertarik saat ini, sapa lagi nanti'});l.history.push({d:todayStr(),t:'Membalas tapi tidak tertarik → tetap di LinkedIn (cold)'});if(!await saveLead(l))return}
+  else if(l.stage==='cold'||l.stage==='lost'){l={...l,...li,stage:'cold',active:true,nextFu:l.nextFu||addDays(30),history:[...(l.history||[]),{d:todayStr(),t:'Membalas tapi tidak tertarik → tetap di LinkedIn (cold)'}]};if(!await saveLead(l))return}
+  else{await saveLead({...l,history:[...(l.history||[]),{d:todayStr(),t:'Balasan LinkedIn: tidak tertarik'+(r.note?' ('+String(r.note).slice(0,120)+')':'')}]})}
+  if(await saveReach({...r,status:'no',replyDate:d,leadId:l.id}))render()}
+/* catat tanggal & isi balasan terbaru di lead cold (dipakai ranking LinkedIn) */
+async function touchLi(rid,date,note){const r=S.reach.get(rid);const l=r&&r.leadId&&S.leads.get(r.leadId);if(!l||l.stage!=='cold')return;if((l.liReply||'')>date)return;
+  const n={...l,liReply:date,liStatus:l.liStatus==='belum_balas'||!l.liStatus?'netral':l.liStatus};if(note)n.liNote=String(note).slice(0,240);if(n.liReply===l.liReply&&n.liNote===l.liNote&&n.liStatus===l.liStatus)return;await saveLead(n)}
 function vReach(el){
   const f=S.rf;const days=weekDays(f.wk);const st=weekStats(days);const q=f.q.toLowerCase();
   const items=st.shown.filter(r=>(!f.st||r.status===f.st)&&(!q||[r.name,r.company,r.title,r.note].join(' ').toLowerCase().includes(q))).sort((a,b)=>b.date.localeCompare(a.date)||(a.name||'').localeCompare(b.name||''));
@@ -940,41 +947,49 @@ async function exportReach(btn,days){
 }
 
 /* ---------- Impor hasil Claude (Chrome) ---------- */
-const CLAUDE_PROMPT=`Setelah selesai reach out / cek balasan LinkedIn, buatkan ringkasan untuk MUFIT Sales Desk.
-Balas HANYA dengan blok JSON (tanpa penjelasan lain) dengan format persis seperti ini:
+const claudePrompt=start=>`Tugasmu: cek inbox LinkedIn saya dan buat ringkasan untuk MUFIT Sales Desk, mencakup SEMUA aktivitas sejak laporan terakhir, bukan hanya hari ini.
 
+LANGKAH 1: TENTUKAN RENTANG
+- Rentang = dari "tanggal_mulai" sampai hari ini, termasuk Sabtu dan Minggu.
+- tanggal_mulai: ${start||''}. Kalau kosong, pakai 7 hari terakhir.
+- Hari ini = tanggal sistem (WIB). Ubah label inbox ke tanggal asli: "Today" = hari ini, "Yesterday" = kemarin, nama hari (Monday dst.) = tanggal hari itu dalam 7 hari terakhir, "Nov 5" = 2026-11-05.
+
+LANGKAH 2: BACA INBOX LENGKAP
+- Jangan berhenti di daftar yang tampil di layar. Scroll atau cari nama sampai semua percakapan dalam rentang terbaca (cek tab Focused dan Other).
+- Buka thread tiap orang yang pesan terakhirnya dari prospek, atau yang pesan reach out Max-nya dikirim dalam rentang.
+- Untuk tiap pesan, catat tanggal PERSIS dari pemisah tanggal di thread (bukan tanggal saya mengecek). Jangan menebak tanggal. Kalau tanggalnya tidak terbaca, tulis "tanggal tidak pasti" di ringkasan dan jangan masukkan ke tanggal lain.
+
+LANGKAH 3: KELOMPOKKAN PER TANGGAL
+Buat SATU blok JSON untuk SATU tanggal, urut dari tanggal terlama. Buat blok untuk setiap tanggal yang punya aktivitas, termasuk akhir pekan.
+- "reach_out" = orang yang pesan reach out PERTAMANYA dikirim Max pada tanggal itu (lihat jam kirim di thread). Jangan masukkan pesan salah kirim atau yang belum benar-benar terkirim.
+- "membalas", "kasih_kontak", "tidak_tertarik" = berdasarkan tanggal balasan prospek, BUKAN tanggal saya membalas.
+- Satu orang hanya masuk SATU kelompok dan SATU tanggal: tanggal balasan prospek yang TERBARU. Kalau ia membalas lagi di hari lain, pindahkan ke tanggal terbarunya dan hapus dari tanggal sebelumnya. Tulis perpindahannya di catatan akhir.
+- Balasan yang cuma emoji atau "terima kasih" setelah Max membalas tetap dicatat. Kelompokkan sesuai kelompok orang itu sebelumnya (misalnya tetap tidak_tertarik).
+
+LANGKAH 4: ATURAN ISI
+- "membalas" = membalas tapi BELUM memberi WA/email, termasuk yang minta proposal, profile, atau contoh program.
+- "kasih_kontak" = memberi WA dan/atau email. Tulis persis seperti di chat. Kalau nomornya milik orang lain (misalnya HRGA), tulis itu di ringkasan.
+- "tidak_tertarik" = menolak, belum butuh, belum ada planning, sudah punya program, atau bukan di bidang HR.
+- Kosongkan array yang tidak ada isinya ([]).
+- Isi link profil LinkedIn kalau ada (dari link di header thread). Jangan mengarang data. Kalau tidak diketahui, isi "".
+- Ringkasan maksimal 1 kalimat, bahasa Indonesia.
+
+FORMAT (satu blok per tanggal, dalam code block JSON terpisah):
 {
   "mufit": 1,
   "tanggal": "YYYY-MM-DD",
-  "reach_out": [
-    {"nama": "", "jabatan": "", "perusahaan": "", "linkedin": "https://www.linkedin.com/in/..."}
-  ],
-  "membalas": [
-    {"nama": "", "jabatan": "", "perusahaan": "", "linkedin": "", "ringkasan": "isi balasan singkat"}
-  ],
-  "kasih_kontak": [
-    {"nama": "", "jabatan": "", "perusahaan": "", "linkedin": "", "wa": "08...", "email": "", "ringkasan": ""}
-  ],
-  "tidak_tertarik": [
-    {"nama": "", "perusahaan": "", "linkedin": "", "ringkasan": ""}
-  ]
+  "reach_out": [{"nama": "", "jabatan": "", "perusahaan": "", "linkedin": "https://www.linkedin.com/in/..."}],
+  "membalas": [{"nama": "", "jabatan": "", "perusahaan": "", "linkedin": "", "ringkasan": ""}],
+  "kasih_kontak": [{"nama": "", "jabatan": "", "perusahaan": "", "linkedin": "", "wa": "08...", "email": "", "ringkasan": ""}],
+  "tidak_tertarik": [{"nama": "", "perusahaan": "", "linkedin": "", "ringkasan": ""}]
 }
 
-Aturan pemisahan per tanggal (PENTING):
-- Buat SATU blok JSON untuk SATU tanggal. Kalau ada aktivitas di beberapa hari, buat blok JSON terpisah per tanggal, jangan digabung.
-- "reach_out" = hanya orang yang pesan reach out pertamanya dikirim pada "tanggal" itu, sesuai jam kirim pesan Max di thread.
-- "membalas", "kasih_kontak", "tidak_tertarik" = dihitung berdasarkan tanggal pesan balasan dari prospek masuk (lihat jam/tanggal pesannya di thread), BUKAN tanggal saya mengecek atau membalasnya.
-- Satu orang hanya masuk satu kelompok balasan dan hanya di satu tanggal. Kalau orang itu membalas lagi di hari lain, masukkan ke tanggal balasan terbarunya dan jangan ulangi di tanggal sebelumnya.
-- Jangan masukkan pesan yang salah kirim atau yang belum benar-benar terkirim ke "reach_out".
-
-Aturan isi:
-- "tanggal" = tanggal yang dirangkum.
-- "membalas" = orang yang membalas tapi BELUM memberi nomor WA/email.
-- "kasih_kontak" = orang yang memberi nomor WA dan/atau email (tulis persis).
-- "tidak_tertarik" = orang yang menolak / belum butuh / belum ada planning.
-- Kosongkan array yang tidak ada isinya ([]).
-- Selalu isi link profil LinkedIn kalau ada. Jangan mengarang data yang tidak ada di thread; kalau tidak diketahui, isi "".
-- Di akhir, hitung total tiap array per tanggal dan tulis sebagai komentar singkat di luar blok JSON (satu baris per tanggal).`;
+SETELAH SEMUA BLOK, tulis di luar JSON:
+1. Satu baris hitungan per tanggal: "YYYY-MM-DD: reach_out N, membalas N, kasih_kontak N, tidak_tertarik N".
+2. "Dipindahkan:" daftar orang yang pindah tanggal atau kelompok sejak laporan sebelumnya (nama, dari mana, ke mana).
+3. "Tanggal tidak pasti:" daftar orang yang tanggal balasannya tidak bisa dipastikan.`;
+/* tanggal_mulai otomatis = tanggal laporan terakhir yang ditempel (settings/liReport), kalau belum ada: 7 hari lalu */
+const liStart=()=>S.liReport||addDays(-7);
 const nrm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 const liSlug=u=>{const m=String(u||'').match(/linkedin\.com\/in\/([^/?#\s]+)/i);return m?decodeURIComponent(m[1]).toLowerCase().replace(/\/$/,''):''};
 function jsonBlocks(t){const out=[];let dep=0,st=-1,inS=false,esc=false;for(let i=0;i<t.length;i++){const c=t[i];if(inS){if(esc)esc=false;else if(c==='\\')esc=true;else if(c==='"')inS=false;continue}if(c==='"'&&dep>0){inS=true;continue}if(c==='{'){if(!dep)st=i;dep++}else if(c==='}'&&dep>0){dep--;if(!dep)out.push(t.slice(st,i+1))}}return out}
@@ -995,28 +1010,28 @@ async function markDay(id,d){const c=S.reach.get(id);if(!c||!isReply(c))return;c
 async function applyClaude(P,quiet){let add=0,skip=0;S.saveFails=0;
   for(const p of P.reach){const ex=findReach(p);if(ex){if(ex.untracked){if(await saveReach({...ex,untracked:false,date:P.date}))add++}else skip++;continue}const id='R'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);if(await saveReach({id,date:P.date,status:'sent',replyDate:'',note:'',leadId:'',name:p.name||slugName(p.linkedin),title:p.title,company:p.company,linkedin:p.linkedin}))add++}
   if(add&&P.date===todayStr()){const cur={connect:0,reach:0,...(S.daily.get(P.date)||{})};cur.reach=(cur.reach||0)+add;S.daily.set(P.date,cur);try{await S.db.doc('daily/'+P.date).set(cur)}catch(e){}}
-  for(const p of P.rep){const r=await ensureReach(p,P.date);if(!r)continue;const x={...r,note:p.note||r.note,replyDate:r.replyDate||P.date};if(r.status==='sent'||r.status==='no')await reachReplied(x);else if(p.note)await saveReach(x);await markDay(r.id,P.date)}
+  for(const p of P.rep){const r=await ensureReach(p,P.date);if(!r)continue;const x={...r,note:p.note||r.note,replyDate:r.replyDate||P.date};if(r.status==='sent')await reachReplied(x);else if(p.note)await saveReach(x);await markDay(r.id,P.date);await touchLi(r.id,P.date,p.note)}
   for(const p of P.con){const r=await ensureReach(p,P.date);if(!r)continue;const c=S.reach.get(r.id)||r;const cl=c.leadId&&S.leads.get(c.leadId);if(c.status==='contact'&&cl&&(!p.phone||cl.phone)&&(!p.email||cl.email)){await markDay(r.id,P.date);continue}await reachContact({...c,note:p.note||c.note,replyDate:c.replyDate||P.date},p.phone,p.email);await markDay(r.id,P.date)}
-  for(const p of P.no){const r=await ensureReach(p,P.date);if(!r)continue;const c=S.reach.get(r.id)||r;if(c.status!=='no')await reachNo({...c,note:p.note||c.note,replyDate:c.replyDate||P.date});await markDay(r.id,P.date)}
+  for(const p of P.no){const r=await ensureReach(p,P.date);if(!r)continue;const c=S.reach.get(r.id)||r;const cl=c.leadId&&S.leads.get(c.leadId);/* lead yang sudah dihapus (lost permanen) tidak dibuat ulang kecuali ada balasan baru */if(c.status!=='no'||(cl&&cl.stage==='lost')||(!cl&&P.date>(c.replyDate||'')))await reachNo({...c,note:p.note||c.note,replyDate:P.date});await markDay(r.id,P.date)}
   if(quiet)return {add,skip,fails:S.saveFails};
   if(S.saveFails)toast(`${S.saveFails} data gagal tersimpan. Tempel ulang hasil yang sama untuk melanjutkan, yang sudah masuk tidak akan dobel.`);
   else toast(`Masuk: ${add} reach out baru${skip?' ('+skip+' sudah ada)':''}, ${P.rep.length} membalas, ${P.con.length} kasih kontak, ${P.no.length} menolak`);render()}
 function openImport(){
   const host=$('#drawerHost');let P=null;
   host.innerHTML=`<div class="scrim" id="scrim"></div><aside class="drawer" role="dialog" aria-label="Tempel hasil Claude"><div class="d-head"><div style="flex:1"><h1>Tempel hasil Claude</h1><p class="sub">Langkah: (1) salin prompt, (2) tempel ke Claude di Chrome setelah reach out / cek balasan, (3) tempel jawabannya di sini.</p></div><button class="btn ghost" id="dClose" aria-label="Tutup">✕</button></div>
-   <div class="d-body"><section class="sec"><h2>1. Prompt untuk Claude</h2><div class="quick"><button class="btn sm primary" id="cpPrompt">Salin prompt</button><span class="sub" style="margin:0;font-size:12px">Cukup sekali disimpan di Claude Chrome, pakai tiap hari.</span></div></section>
+   <div class="d-body"><section class="sec"><h2>1. Prompt untuk Claude</h2><div class="quick"><label class="sub" style="margin:0;font-size:12.5px">Mulai dari <input type="date" id="impStart" value="${esc(liStart())}" style="width:auto"></label><button class="btn sm primary" id="cpPrompt">Salin prompt</button></div><p class="sub" style="font-size:12px;margin:6px 0 0">Tanggal mulai otomatis diisi dari laporan terakhir yang kamu tempel${S.liReport?' ('+esc(fmtY(S.liReport))+')':' (belum ada, jadi 7 hari terakhir)'}. Semua yang membalas di rentang itu ikut terbaca, termasuk akhir pekan dan yang tidak tertarik (tetap masuk LinkedIn cold).</p></section>
    <section class="sec"><h2>2. Tempel jawaban Claude</h2><textarea id="impTxt" rows="10" placeholder='{"mufit":1,"tanggal":"…","reach_out":[…],"membalas":[…],"kasih_kontak":[…]}'></textarea><div id="impPrev"></div></section></div>
    <div class="d-foot"><button class="btn primary" id="impGo" disabled>Masukkan ke Sales Desk</button><span class="sub" id="impMsg" style="margin:0;font-size:12px"></span></div></aside>`;
   S.open={type:'import'};
   const close=()=>{S.open=null;host.innerHTML=''};$('#scrim').onclick=close;$('#dClose').onclick=close;
-  $('#cpPrompt').onclick=()=>copy(CLAUDE_PROMPT);
+  $('#cpPrompt').onclick=()=>copy(claudePrompt($('#impStart').value));
   $('#impTxt').oninput=e=>{const pv=$('#impPrev'),go=$('#impGo');try{const PS=parseAll(e.target.value);P=PS;
       const tag=p=>{const r=findReach(p),l=findLead(p);return r?'<small style="display:inline"> · sudah tercatat</small>':l?'<small style="display:inline"> · lead lama: '+esc(SMAP[l.stage]?.n||'')+'</small>':''};
       const blk=(t,a,extra)=>a.length?`<p style="margin:10px 0 4px"><b>${t} (${a.length})</b></p>`+a.map(p=>`<div style="font-size:13px">${esc(p.name||p.linkedin)}${p.company?' · '+esc(p.company):''}${extra?extra(p):''}${tag(p)}</div>`).join(''):'';
-      pv.innerHTML=(PS.length>1?`<p class="sub" style="font-size:12.5px"><b>${PS.length} tanggal terbaca.</b> Tiap tanggal dicatat terpisah.</p>`:'')+PS.map(P=>`<div style="border-top:1px solid var(--line,#ddd);margin-top:10px;padding-top:6px"><p class="sub" style="font-size:12.5px;margin:0">Tanggal: <b>${esc(fmtY(P.date))}</b> · reach out ${P.reach.length} · balasan masuk ${P.rep.length+P.con.length+P.no.length} (membalas ${P.rep.length}, kasih no/email ${P.con.length}, menolak ${P.no.length})</p>`+blk('Reach out',P.reach)+blk('Membalas → List follow-up LinkedIn (cold)',P.rep)+blk('Kasih no/email → Database + Warm',P.con,p=>' · '+esc([p.phone,p.email].filter(Boolean).join(' / ')))+blk('Tidak tertarik',P.no)+'</div>').join('');
+      pv.innerHTML=(PS.length>1?`<p class="sub" style="font-size:12.5px"><b>${PS.length} tanggal terbaca.</b> Tiap tanggal dicatat terpisah.</p>`:'')+PS.map(P=>`<div style="border-top:1px solid var(--line,#ddd);margin-top:10px;padding-top:6px"><p class="sub" style="font-size:12.5px;margin:0">Tanggal: <b>${esc(fmtY(P.date))}</b> · reach out ${P.reach.length} · balasan masuk ${P.rep.length+P.con.length+P.no.length} (membalas ${P.rep.length}, kasih no/email ${P.con.length}, menolak ${P.no.length})</p>`+blk('Reach out',P.reach)+blk('Membalas → List follow-up LinkedIn (cold)',P.rep)+blk('Kasih no/email → Database + Warm',P.con,p=>' · '+esc([p.phone,p.email].filter(Boolean).join(' / ')))+blk('Tidak tertarik → tetap LinkedIn (cold), ranking bawah',P.no)+'</div>').join('');
       const n=PS.reduce((s,P)=>s+P.reach.length+P.rep.length+P.con.length+P.no.length,0);go.disabled=!n;$('#impMsg').textContent=n?'':'JSON terbaca, tapi kosong.'}
     catch(err){P=null;go.disabled=true;pv.innerHTML=e.target.value.trim()?'<p class="chip late" style="white-space:normal;margin-top:8px">Format belum terbaca. Pastikan yang ditempel adalah blok JSON dari Claude.</p>':''}};
-  $('#impGo').onclick=async()=>{if(!P)return;const b=$('#impGo');b.disabled=true;b.textContent='Memasukkan…';let fails=0;const sum=[];for(const x of P){const r=await applyClaude(x,true);fails+=r.fails;sum.push(fmtY(x.date)+': '+r.add+' reach out, '+(x.rep.length+x.con.length+x.no.length)+' balasan')}toast(fails?fails+' data gagal tersimpan. Tempel ulang hasil yang sama, yang sudah masuk tidak akan dobel.':'Masuk. '+sum.join(' · '));close();S.rf.wk=0;location.hash='reach-out';render()};
+  $('#impGo').onclick=async()=>{if(!P)return;const b=$('#impGo');b.disabled=true;b.textContent='Memasukkan…';let fails=0;const sum=[];for(const x of P){const r=await applyClaude(x,true);fails+=r.fails;sum.push(fmtY(x.date)+': '+r.add+' reach out, '+(x.rep.length+x.con.length+x.no.length)+' balasan')}if(!fails){const t=todayStr();S.liReport=t;try{await S.db.doc('settings/liReport').set({date:t})}catch(e){}}toast(fails?fails+' data gagal tersimpan. Tempel ulang hasil yang sama, yang sudah masuk tidak akan dobel.':'Masuk. '+sum.join(' · '));close();S.rf.wk=0;location.hash='reach-out';render()};
   setTimeout(()=>$('#impTxt').focus(),30)}
 
 /* ---------- Cek kontak bulk: LinkedIn (cold) yang kasih no/email → Warm ---------- */
