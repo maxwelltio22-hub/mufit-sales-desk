@@ -915,7 +915,7 @@ const d=/^\d{4}-\d{2}-\d{2}$/.test(o.tanggal||'')?o.tanggal:todayStr();
 const nmCore=x=>String(x||'').split(/[,|(]/)[0].trim();
 function samePerson(a,b,ca,cb){const x=nmCore(a),y=nmCore(b);if(sameName(x,y))return coMatch(ca,cb);
   const wx=x.toLowerCase().split(/\s+/).filter(Boolean),wy=y.toLowerCase().split(/\s+/).filter(Boolean);const [s1,l1]=wx.length<=wy.length?[wx,wy]:[wy,wx];
-  return s1.length>=2&&s1.every((w,k)=>nrm(w)===nrm(l1[k]))&&nrm(ca)&&nrm(cb)&&coMatch(ca,cb)}
+  return s1.length>=2&&nrm(s1.join('')).length>=8&&s1.every((w,k)=>nrm(w)===nrm(l1[k]))&&coMatch(ca,cb)}
 function findReach(p){const s=liSlug(p.linkedin);const all=[...S.reach.values()];return (s&&all.find(r=>liSlug(r.linkedin)===s))||all.find(r=>!(s&&liSlug(r.linkedin)&&liSlug(r.linkedin)!==s)&&samePerson(p.name,r.name,p.company,r.company))}
 function findLead(p){const s=liSlug(p.linkedin),ph=phN(p.phone),em=String(p.email||'').trim().toLowerCase();const all=[...S.leads.values()].filter(l=>!GONE.has(l.id));
   const hit=all.filter(l=>(s&&liSlug(l.linkedin)===s)||(ph&&phN(l.phone)===ph)||(em&&String(l.email||'').trim().toLowerCase()===em)||(!(s&&liSlug(l.linkedin)&&liSlug(l.linkedin)!==s)&&samePerson(p.name,l.name,p.company,l.company)));
