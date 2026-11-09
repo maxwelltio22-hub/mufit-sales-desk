@@ -423,6 +423,7 @@ async function boot(){
   },e=>{clearTimeout(timer);setSync('bad','Gagal memuat data ('+e.code+')');S.loadedL=true;render()});
   db.collection('calls').onSnapshot(snap=>{S.calls=new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));S.loadedC=true;if(view()==='cold-call')render()},()=>{S.loadedC=true});
   db.collection('reach').onSnapshot(snap=>{S.reach=mergePend('reach',new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}])));if(['reach-out','dashboard','hari-ini','tugas-atasan','ringkasan'].includes(view()))render();else counts()},()=>{});
+  db.collection('inbox').onSnapshot(snap=>{S.inbox=new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));if(view()==='reach-out')render()},()=>{});
   db.collection('bossTasks').onSnapshot(snap=>{S.bossTasks=new Map(snap.docs.map(d=>[d.id,{id:d.id,...d.data()}]));render()},()=>{});
   db.collection('tasks').onSnapshot(snap=>{S.tasks=new Map(snap.docs.map(d=>[d.id,d.data()]));if(['hari-ini','tugas-atasan'].includes(view()))render()},()=>{});
   db.collection('settings').onSnapshot(snap=>{const d=snap.docs.find(x=>x.id==='targets');S.targets=d?d.data():null;const r=snap.docs.find(x=>x.id==='fuReset');S.fuReset=r?(r.data().date||''):'';const lr=snap.docs.find(x=>x.id==='liReport');S.liReport=lr?(lr.data().date||''):'';const di=snap.docs.find(x=>x.id==='dupIgnore');S.dupIgnore=di?(di.data().pairs||[]):[];render()},()=>{});
@@ -863,6 +864,19 @@ async function reachNo(r){/* membalas tapi tidak tertarik: tetap masuk List foll
 /* catat tanggal & isi balasan terbaru di lead cold (dipakai ranking LinkedIn) */
 async function touchLi(rid,date,note){const r=S.reach.get(rid);const l=r&&r.leadId&&S.leads.get(r.leadId);if(!l||l.stage!=='cold')return;if((l.liReply||'')>date)return;
   const n={...l,liReply:date,liStatus:l.liStatus==='belum_balas'||!l.liStatus?'netral':l.liStatus};if(note)n.liNote=String(note).slice(0,240);if(n.liReply===l.liReply&&n.liNote===l.liNote&&n.liStatus===l.liStatus)return;await saveLead(n)}
+/* ---------- Balasan dari Gmail (notifikasi email LinkedIn yang dibaca Claude, ditulis ke koleksi inbox) ---------- */
+function gmList(){const all=[...(S.inbox||new Map()).values()].filter(x=>x.status!=='done'&&(x.name||x.linkedin)).sort((a,b)=>(b.date||'').localeCompare(a.date||'')||(a.name||'').localeCompare(b.name||''));
+  return all.map(x=>{const p={name:x.name,company:x.company,linkedin:x.linkedin};const r=findReach(p),l=findLead(p);const rec=!!(r&&r.status!=='sent'&&(r.replyDate||'')>=(x.date||''));return {x,r,l,rec}})}
+function gmPanel(){if(S.role!=='owner')return '';const L=gmList();const todo=L.filter(i=>!i.rec);
+  return `<section class="panel" style="margin-bottom:16px"><div class="quick" style="justify-content:space-between;flex-wrap:wrap"><h2 style="margin:0">Balasan dari Gmail ${L.length?`<span class="count">${L.length}</span>`:''}</h2><div class="quick"><button class="btn sm" id="gmAsk">Salin perintah cek Gmail</button>${todo.length?`<button class="btn sm primary" id="gmAll">Masukkan ${todo.length} balasan</button>`:''}</div></div>
+   <p class="sub" style="margin:6px 0 8px;font-size:12.5px">Siapa yang membalas reach out-mu menurut email notifikasi LinkedIn. Claude membacanya dari Gmail yang tersambung (otomatis tiap pagi kerja, atau saat kamu minta). Email hanya memberi tahu siapa yang membalas, bukan isi chatnya. Yang kasih no/email atau menolak, ubah setelah kamu cek chat-nya.</p>
+   ${L.length?L.map(({x,r,l,rec})=>`<div class="row" style="grid-template-columns:minmax(0,1fr) auto;margin-bottom:6px"><div class="who"><b>${esc(x.name||x.linkedin)}</b><small>${esc([x.title,x.company].filter(Boolean).join(' · ')||'—')} · balas ${esc(fmt(x.date))}${x.linkedin?` · <a href="${esc(x.linkedin)}" target="_blank" rel="noopener">profil</a>`:''}</small></div><div class="act"><span class="chip ${rec?'':'late'}">${rec?'Sudah tercatat':(l?'Ada di data: '+esc(SMAP[l.stage]?.n||l.stage):'Belum tercatat')}</span><button class="btn sm ghost" data-gmx="${esc(x.id)}" title="Abaikan">✕</button></div></div>`).join(''):'<p class="sub" style="font-size:13px;margin:0">Belum ada balasan baru dari email. Klik "Salin perintah cek Gmail", tempel ke Claude, lalu daftar muncul di sini.</p>'}</section>`}
+async function gmAddAll(btn){const todo=gmList().filter(i=>!i.rec);if(!todo.length)return;btn.disabled=true;btn.textContent='Memasukkan…';S.saveFails=0;const by=new Map();
+  for(const i of todo){const d=i.x.date||todayStr();(by.get(d)||by.set(d,[]).get(d)).push({name:i.x.name||slugName(i.x.linkedin),title:i.x.title||'',company:i.x.company||'',linkedin:i.x.linkedin||'',phone:'',email:'',note:i.x.note||'Dari email LinkedIn (isi chat belum dicek)'})}
+  for(const [d,rep] of [...by].sort((a,b)=>a[0]<b[0]?-1:1))await applyClaude({date:d,reach:[],rep,con:[],no:[]},true);
+  if(S.saveFails){toast(S.saveFails+' data gagal tersimpan, coba lagi');render();return}
+  for(const i of todo){try{await S.db.doc('inbox/'+i.x.id).update({status:'done',doneAt:todayStr()})}catch(e){}}
+  toast(todo.length+' balasan masuk ke LinkedIn (cold). Cek isi chat-nya, ya.');render()}
 function vReach(el){
   const f=S.rf;const days=weekDays(f.wk);const st=weekStats(days);const q=f.q.toLowerCase();
   const items=st.shown.filter(r=>(!f.st||r.status===f.st)&&(!q||[r.name,r.company,r.title,r.note].join(' ').toLowerCase().includes(q))).sort((a,b)=>b.date.localeCompare(a.date)||(a.name||'').localeCompare(b.name||''));
@@ -876,12 +890,13 @@ function vReach(el){
     ${f.cid===r.id?`<div class="grid2" style="margin-top:6px;grid-template-columns:1fr 1fr auto"><input type="text" id="rc-phone" placeholder="No WA 08…" value="${esc(l?.phone||'')}"><input type="email" id="rc-email" placeholder="Email" value="${esc(l?.email||'')}"><button class="btn sm primary" data-rcsave="${esc(r.id)}">Simpan</button></div>`:''}</div>
     <div class="act">${r.status==='sent'?`<button class="btn sm" data-rrep="${esc(r.id)}">Membalas</button>`:''}${r.status!=='contact'?`<button class="btn sm${r.status==='replied'?' primary':''}" data-rcon="${esc(r.id)}">Kasih no/email</button>`:''}${r.status==='sent'||r.status==='replied'?`<button class="btn sm ghost" data-rno="${esc(r.id)}">Menolak</button>`:''}${l?`<button class="btn sm" data-rlead="${esc(l.id)}">Buka lead</button>`:''}${r.status!=='sent'?`<button class="btn sm ghost" data-rundo="${esc(r.id)}" title="Kembalikan ke Belum balas">Batal</button>`:''}${f.del===r.id?`<button class="btn sm danger" data-rdelok="${esc(r.id)}">Yakin hapus?</button>`:`<button class="btn sm ghost" data-rdel="${esc(r.id)}" aria-label="Hapus">✕</button>`}</div></div>`};
   const diff=(a,b)=>b?` <small style="display:inline;color:var(--muted)">(${a>=b?'+':''}${a-b} vs minggu lalu)</small>`:'';
-  el.innerHTML=`<div class="head"><div><h1>Reach out harian</h1><p class="sub">Catat siapa saja yang kamu reach out di LinkedIn, lalu tandai yang membalas. Yang membalas otomatis masuk List follow-up → LinkedIn (cold). Yang kasih no/email masuk Database dan List follow-up → Warm.</p></div><div class="spacer"></div>
-   <div class="tools"><button class="btn" id="rxl">Export Excel minggu ini</button><button class="btn" id="radd">+ Tambah manual</button><button class="btn primary" id="rimp">Tempel hasil Claude</button></div></div>
+  el.innerHTML=`<div class="head"><div><h1>Reach out harian</h1><p class="sub">Catat siapa saja yang kamu reach out di LinkedIn (tempel dari Claude). Balasan masuk lewat panel Gmail di bawah, atau tandai manual. Yang membalas otomatis masuk List follow-up → LinkedIn (cold). Yang kasih no/email masuk Database dan List follow-up → Warm.</p></div><div class="spacer"></div>
+   <div class="tools"><button class="btn" id="rxl">Export Excel minggu ini</button><button class="btn" id="radd">+ Tambah manual</button><button class="btn primary" id="rimp">Tempel reach out (Claude)</button></div></div>
    <div class="tools" style="margin-bottom:14px"><button class="btn sm" id="rprev" aria-label="Minggu sebelumnya">‹</button><b>Minggu ${esc(fmt(days[0]))} – ${esc(fmtY(days[6]))}</b><button class="btn sm" id="rnext" aria-label="Minggu berikutnya" ${f.wk>=0?'disabled':''}>›</button>${f.wk?'<button class="btn sm ghost" id="rnow">Minggu ini</button>':''}</div>
    ${f.add?`<section class="panel" style="margin-bottom:16px"><h2>Tambah reach out</h2><div class="grid2" style="grid-template-columns:180px 1fr"><label class="f">Tanggal kirim<input type="date" id="ra-date" value="${esc(f.addDate||todayStr())}"></label><div></div></div>
      <label class="f">Satu orang per baris. Format: <code>Nama - Jabatan - Perusahaan</code>, atau tempel link profil LinkedIn.<textarea id="ra-txt" rows="6" placeholder="Rina Putri - HR Manager - PT Maju Jaya&#10;Budi Santoso - Talent Acquisition at PT Sinar&#10;https://www.linkedin.com/in/dewi-lestari-123/">${esc(f.addTxt||'')}</textarea></label>
      <div class="quick"><button class="btn primary" id="ra-save">Simpan</button><button class="btn ghost" id="ra-cancel">Batal</button><span class="sub" id="ra-n" style="margin:0;font-size:12.5px"></span></div></section>`:''}
+   ${gmPanel()}
    <div class="tiles">
     <div class="tile"><b>${st.total}</b><span>Reach out${diff(st.total,prev.total)}</span></div>
     <div class="tile"><b>${st.rep}</b><span>Balasan masuk</span></div>
@@ -900,7 +915,7 @@ function vReach(el){
   const re=()=>vReach(el);
   $('#rprev').onclick=()=>{f.wk--;re()};$('#rnext').onclick=()=>{if(f.wk<0){f.wk++;re()}};if($('#rnow'))$('#rnow').onclick=()=>{f.wk=0;re()};
   $('#radd').onclick=()=>{f.add=!f.add;re();if(f.add)setTimeout(()=>$('#ra-txt')?.focus(),30)};
-  $('#rxl').onclick=e=>exportReach(e.currentTarget,days);$('#rimp').onclick=openImport;
+  $('#rxl').onclick=e=>exportReach(e.currentTarget,days);$('#rimp').onclick=openImport;if($('#gmAll'))$('#gmAll').onclick=e=>gmAddAll(e.currentTarget);if($('#gmAsk'))$('#gmAsk').onclick=()=>copy('Cek balasan LinkedIn dari Gmail sejak '+(S.gmCheck||addDays(-7))+' sampai hari ini, lalu tulis daftar yang membalas ke panel Balasan dari Gmail di MUFIT Sales Desk (koleksi inbox). Jangan ubah data lain.');el.querySelectorAll('[data-gmx]').forEach(b=>b.onclick=async()=>{try{await S.db.doc('inbox/'+b.dataset.gmx).update({status:'done',doneAt:todayStr(),ignored:true})}catch(e){toast('Gagal')}});
   if(f.add){const cnt=()=>{const n=parseReach($('#ra-txt').value).length;$('#ra-n').textContent=n?n+' orang terbaca':''};$('#ra-txt').oninput=e=>{f.addTxt=e.target.value;cnt()};$('#ra-date').onchange=e=>f.addDate=e.target.value;cnt();
     $('#ra-cancel').onclick=()=>{f.add=false;f.addTxt='';re()};
     $('#ra-save').onclick=async()=>{const rows=parseReach($('#ra-txt').value);if(!rows.length){toast('Belum ada nama yang terbaca');return}const d=$('#ra-date').value||todayStr();f.add=false;f.addTxt='';await addReach(rows,d)}}
@@ -993,6 +1008,26 @@ SETELAH SEMUA BLOK, tulis di luar JSON:
 3. "Tanggal tidak pasti:" daftar orang yang tanggal balasannya tidak bisa dipastikan.`;
 /* tanggal_mulai otomatis = tanggal laporan terakhir yang ditempel (settings/liReport), kalau belum ada: 7 hari lalu */
 const liStart=()=>S.liReport||addDays(-7);
+const reachPrompt=start=>`Tugasmu: buat daftar orang yang saya REACH OUT di LinkedIn untuk MUFIT Sales Desk. Ini laporan baca saja. JANGAN mengirim, membalas, atau menghapus pesan apa pun.
+
+RENTANG
+- Dari ${start||'(tanggal mulai)'} sampai hari ini (WIB), termasuk Sabtu dan Minggu.
+- Ubah label relatif ke tanggal asli dulu ("Today" = hari ini, "Yesterday" = kemarin, nama hari = tanggal hari itu dalam 7 hari terakhir). Kalau tidak pasti, jangan menebak, tulis di "Tanggal tidak pasti".
+
+YANG DICATAT
+- "reach_out" = orang yang pesan reach out PERTAMANYA dikirim Max pada tanggal itu. Sumber utama: daftar nama/connections yang saya lampirkan di chat ini (tanggal kirim = tanggal file/pesan saya). Kalau tidak ada lampiran, baca dari daftar pesan terkirim di inbox LinkedIn (cuplikan berawalan "You:"), tanpa mencari per nama.
+- Jangan masukkan pesan yang salah kirim atau belum terkirim.
+- JANGAN mencatat balasan prospek di sini. Balasan dicatat lewat panel Gmail di Sales Desk, jadi "membalas", "kasih_kontak", "tidak_tertarik" selalu [].
+- Isi link profil LinkedIn kalau ada. Jangan mengarang data; yang tidak diketahui diisi "".
+
+FORMAT (satu blok JSON per tanggal, urut dari yang terlama):
+{
+  "mufit": 1,
+  "tanggal": "YYYY-MM-DD",
+  "reach_out": [{"nama": "", "jabatan": "", "perusahaan": "", "linkedin": "https://www.linkedin.com/in/..."}],
+  "membalas": [], "kasih_kontak": [], "tidak_tertarik": []
+}
+Setelah semua blok, tulis di luar JSON: satu baris hitungan per tanggal ("YYYY-MM-DD: reach_out N") dan "Tanggal tidak pasti:" (kalau ada).`;
 const nrm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
 const liSlug=u=>{const m=String(u||'').match(/linkedin\.com\/in\/([^/?#\s]+)/i);return m?decodeURIComponent(m[1]).toLowerCase().replace(/\/$/,''):''};
 function jsonBlocks(t){const out=[];let dep=0,st=-1,inS=false,esc=false;for(let i=0;i<t.length;i++){const c=t[i];if(inS){if(esc)esc=false;else if(c==='\\')esc=true;else if(c==='"')inS=false;continue}if(c==='"'&&dep>0){inS=true;continue}if(c==='{'){if(!dep)st=i;dep++}else if(c==='}'&&dep>0){dep--;if(!dep)out.push(t.slice(st,i+1))}}return out}
@@ -1029,13 +1064,13 @@ async function applyClaude(P,quiet){let add=0,skip=0;S.saveFails=0;
   else toast(`Masuk: ${add} reach out baru${skip?' ('+skip+' sudah ada)':''}, ${P.rep.length} membalas, ${P.con.length} kasih kontak, ${P.no.length} menolak`);render()}
 function openImport(){
   const host=$('#drawerHost');let P=null;
-  host.innerHTML=`<div class="scrim" id="scrim"></div><aside class="drawer" role="dialog" aria-label="Tempel hasil Claude"><div class="d-head"><div style="flex:1"><h1>Tempel hasil Claude</h1><p class="sub">Langkah: (1) salin prompt, (2) tempel ke Claude di Chrome setelah reach out / cek balasan, (3) tempel jawabannya di sini.</p></div><button class="btn ghost" id="dClose" aria-label="Tutup">✕</button></div>
-   <div class="d-body"><section class="sec"><h2>1. Prompt untuk Claude</h2><div class="quick"><label class="sub" style="margin:0;font-size:12.5px">Mulai dari <input type="date" id="impStart" value="${esc(liStart())}" style="width:auto"></label><button class="btn sm primary" id="cpPrompt">Salin prompt</button></div><p class="sub" style="font-size:12px;margin:6px 0 0">Tanggal mulai otomatis diisi dari laporan terakhir yang kamu tempel${S.liReport?' ('+esc(fmtY(S.liReport))+')':' (belum ada, jadi 7 hari terakhir)'}. Semua yang membalas di rentang itu ikut terbaca, termasuk akhir pekan dan yang tidak tertarik (tetap masuk LinkedIn cold).</p></section>
+  host.innerHTML=`<div class="scrim" id="scrim"></div><aside class="drawer" role="dialog" aria-label="Tempel hasil Claude"><div class="d-head"><div style="flex:1"><h1>Tempel reach out (Claude)</h1><p class="sub">Untuk mencatat siapa yang kamu reach out. Langkah: (1) salin prompt, (2) tempel ke Claude di Chrome, (3) tempel jawabannya di sini. Balasan dicatat lewat panel Gmail.</p></div><button class="btn ghost" id="dClose" aria-label="Tutup">✕</button></div>
+   <div class="d-body"><section class="sec"><h2>1. Prompt untuk Claude</h2><div class="quick"><label class="sub" style="margin:0;font-size:12.5px">Mulai dari <input type="date" id="impStart" value="${esc(liStart())}" style="width:auto"></label><button class="btn sm primary" id="cpPrompt">Salin prompt</button></div><p class="sub" style="font-size:12px;margin:6px 0 0">Tanggal mulai otomatis diisi dari laporan terakhir yang kamu tempel${S.liReport?' ('+esc(fmtY(S.liReport))+')':' (belum ada, jadi 7 hari terakhir)'}. Akhir pekan ikut terbaca.</p></section>
    <section class="sec"><h2>2. Tempel jawaban Claude</h2><textarea id="impTxt" rows="10" placeholder='{"mufit":1,"tanggal":"…","reach_out":[…],"membalas":[…],"kasih_kontak":[…]}'></textarea><div id="impPrev"></div></section></div>
    <div class="d-foot"><button class="btn primary" id="impGo" disabled>Masukkan ke Sales Desk</button><span class="sub" id="impMsg" style="margin:0;font-size:12px"></span></div></aside>`;
   S.open={type:'import'};
   const close=()=>{S.open=null;host.innerHTML=''};$('#scrim').onclick=close;$('#dClose').onclick=close;
-  $('#cpPrompt').onclick=()=>copy(claudePrompt($('#impStart').value));
+  $('#cpPrompt').onclick=()=>copy(reachPrompt($('#impStart').value));
   $('#impTxt').oninput=e=>{const pv=$('#impPrev'),go=$('#impGo');try{const PS=parseAll(e.target.value);P=PS;
       const tag=p=>{const r=findReach(p),l=findLead(p);return r?'<small style="display:inline"> · sudah tercatat</small>':l?'<small style="display:inline"> · lead lama: '+esc(SMAP[l.stage]?.n||'')+'</small>':''};
       const blk=(t,a,extra)=>a.length?`<p style="margin:10px 0 4px"><b>${t} (${a.length})</b></p>`+a.map(p=>`<div style="font-size:13px">${esc(p.name||p.linkedin)}${p.company?' · '+esc(p.company):''}${extra?extra(p):''}${tag(p)}</div>`).join(''):'';
