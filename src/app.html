@@ -1023,16 +1023,20 @@ Daftar (${L.length} orang):
 ${L.map(l=>{const m=missingF(l);return '- '+l.name+(l.company?' ('+l.company+')':'')+(l.linkedin?' '+l.linkedin:'')+(m.length?' [kurang: '+m.join(', ')+']':'')}).join('\n')}`}
 const PH_RE=/(?:\+?62|0)\s?8[\d\s.\-]{7,15}\d/g,EM_RE=/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig;
 function findCold(name,li){const s=liSlug(li),n=nrm(name);const L=bulkPool();return L.find(l=>s&&liSlug(l.linkedin)===s)||L.find(l=>n&&nrm(l.name)===n)||(n.length>=5?L.find(l=>{const m=nrm(l.name);return m.length>=5&&(m.includes(n)||n.includes(m))}):null)||null}
+/* no HP / email yang sudah dimiliki lead LAIN tidak boleh ditempel ke lead ini (misalnya salah cocok nama) */
+function contactOwner(l,phone,email){const cp=phN(phone),ce=String(email||'').trim().toLowerCase();if(!cp&&!ce)return null;
+  return [...S.leads.values()].find(o=>o.id!==l.id&&((cp&&phN(o.phone)===cp)||(ce&&String(o.email||'').trim().toLowerCase()===ce)))||null}
 function parseBulk(txt){const res={con:[],no:[],miss:[],fill:[],json:false};const t=String(txt||'');
   for(const b of jsonBlocks(t.replace(/```(?:json)?/gi,''))){let o;try{o=JSON.parse(b)}catch(e){continue}if(!o||typeof o!=='object'||Array.isArray(o))continue;res.json=true;
     const arr=k=>Array.isArray(o[k])?o[k]:[];
-    for(const p of arr('kasih_kontak')){const nm=String(p.nama||p.name||'').trim(),phone=String(p.wa||p.phone||p.no||'').trim(),email=String(p.email||'').trim();if(!phone&&!email)continue;const l=findCold(nm,p.linkedin);if(l&&l.stage!=='cold'){const fo2=fillOf(l,p);if(Object.keys(fo2).length)res.fill.push({l,name:nm,f:fo2});continue}const fo=l?fillOf(l,p):{};(l?res.con:res.miss).push({l,name:nm,phone,email,note:String(p.ringkasan||'').trim(),f:Object.keys(fo).length?fo:undefined})}
+    for(const p of arr('kasih_kontak')){const nm=String(p.nama||p.name||'').trim(),phone=String(p.wa||p.phone||p.no||'').trim(),email=String(p.email||'').trim();if(!phone&&!email)continue;const l=findCold(nm,p.linkedin);if(l&&l.stage!=='cold'){const fo2=fillOf(l,p);if(Object.keys(fo2).length)res.fill.push({l,name:nm,f:fo2});continue}const ow=l?contactOwner(l,phone,email):null;if(ow){res.miss.push({name:nm,phone,email,note:'Kontak ini sudah dipakai '+(ow.name||'lead lain')+', tidak ditempel ke '+l.name});continue}
+      const fo=l?fillOf(l,p):{};(l?res.con:res.miss).push({l,name:nm,phone,email,note:String(p.ringkasan||'').trim(),f:Object.keys(fo).length?fo:undefined})}
     for(const p of arr('tidak_tertarik')){const nm=String(p.nama||p.name||'').trim();const l=findCold(nm,p.linkedin);if(l&&l.stage==='cold')res.no.push({l,name:nm,note:String(p.ringkasan||'').trim()})}
     for(const p of arr('lengkapi')){const nm=String(p.nama||p.name||'').trim();const l=findCold(nm,p.linkedin);if(!l)continue;const f=fillOf(l,p);if(Object.keys(f).length)res.fill.push({l,name:nm,f})}}
   if(!res.json){const lines=t.split(/\n/),L=coldLeads();
     const L2=coldSplit().check;lines.forEach((ln,i)=>{const L=L2;const ph=(ln.match(PH_RE)||[])[0]||'',em=(ln.match(EM_RE)||[])[0]||'';if(!ph&&!em)return;let l=null;
-      for(let j=i;j>=Math.max(0,i-8)&&!l;j--){const x=nrm(lines[j]);l=L.find(c=>{const m=nrm(c.name);return m.length>=5&&x.includes(m)})||L.find(c=>{const f=nrm(String(c.name||'').split(/\s+/).slice(0,2).join(' '));return f.length>=6&&x.includes(f)})||null}
-      const e={l,name:l?l.name:ln.trim().slice(0,70),phone:ph.replace(/[\s.\-]/g,''),email:em,note:''};
+      for(let j=i;j>=Math.max(0,i-8)&&!l;j--){const x=nrm(lines[j]);l=L.find(c=>{const m=nrm(c.name);return m.length>=5&&x.includes(m)})||null}
+      const e={l,name:l?l.name:ln.trim().slice(0,70),phone:ph.replace(/[\s.\-]/g,''),email:em,note:''};if(l&&contactOwner(l,e.phone,e.email)){res.miss.push({name:l.name,phone:e.phone,email:e.email,note:'Kontak sudah dipakai lead lain'});return}
       const ex=l&&res.con.find(c=>c.l===l);if(ex){ex.phone=ex.phone||e.phone;ex.email=ex.email||e.email}else(l?res.con:res.miss).push(e)})}
   const seen=new Set();res.con=res.con.filter(c=>{if(seen.has(c.l.id))return false;seen.add(c.l.id);return true});
   res.no=res.no.filter(c=>!seen.has(c.l.id));
@@ -1045,7 +1049,7 @@ function fillOf(l,p){const f={},g=k=>String(p[k]||'').trim();
   const co=g('perusahaan')||g('company'),ti=g('jabatan')||g('title'),li=g('linkedin'),wa=g('wa')||g('phone'),em=g('email');
   if(co&&!String(l.company||'').trim())f.company=co;if(ti&&!String(l.title||'').trim())f.title=ti;
   if(li&&/linkedin\.com\/in\//i.test(li)&&!String(l.linkedin||'').trim())f.linkedin=li;
-  if(wa&&!l.phone&&phN(wa))f.phone=wa;if(em&&!l.email&&/@/.test(em))f.email=em;return f}
+  if(wa&&!l.phone&&phN(wa)&&!contactOwner(l,wa,''))f.phone=wa;if(em&&!l.email&&/@/.test(em)&&!contactOwner(l,'',em))f.email=em;return f}
 const fillTxt=f=>Object.entries(f).map(([k,v])=>({company:'perusahaan',title:'jabatan',linkedin:'link LinkedIn',phone:'no WA',email:'email'}[k]+': '+v)).join(' · ');
 async function applyBulk(B,sel){let w=0,x=0;const t=todayStr();
   for(const c of B.con){if(!sel.has('c'+c.l.id))continue;const l=S.leads.get(c.l.id);if(!l)continue;
@@ -1178,7 +1182,7 @@ function parseBulkFu(txt){const out={sent:[],con:[],no:[],skip:[],miss:[],date:t
   for(const p of A('kasih_kontak')){const phone=String(p.wa||p.phone||'').trim(),email=String(p.email||'').trim();if(!phone&&!email)continue;const l=findColdAll(nm(p),p.linkedin)||findLead({name:nm(p),linkedin:p.linkedin});(l?out.con:out.miss).push({l,name:nm(p),phone,email,note:String(p.ringkasan||'').trim()})}
   for(const p of A('tidak_tertarik')){const l=findColdAll(nm(p),p.linkedin)||findLead({name:nm(p),linkedin:p.linkedin});(l?out.no:out.miss).push({l,name:nm(p),note:String(p.ringkasan||'').trim()})}
   for(const p of A('dilewati'))out.skip.push({name:nm(p),why:String(p.alasan||'').trim()})}return out}
-function openBulkFu(){const host=$('#drawerHost');let withNo=false,P=null;
+function openBulkFu(){const host=$("#drawerHost");let withNo=true,P=null;
   const draw=()=>{const L=bulkFuList(withNo);const nNo=coldLeads().filter(l=>l.liStatus==='tidak_tertarik').length;
   host.innerHTML=`<div class="scrim" id="scrim"></div><aside class="drawer" role="dialog" aria-label="Bulk follow-up LinkedIn"><div class="d-head"><div style="flex:1"><h1>Bulk follow-up LinkedIn (cold)</h1><p class="sub">Salin semua lead LinkedIn (cold) beserta catatannya ke Claude di Chrome. Claude membaca chat tiap orang dan menyiapkan balasan follow up sesuai jawaban terakhirnya (bukan template) untuk minta no WA/email, dan baru mengirim setelah kamu bilang "kirim".</p></div><button class="btn ghost" id="dClose" aria-label="Tutup">✕</button></div>
    <div class="d-body"><section class="sec"><h2>1. Salin prompt + daftar</h2><p class="sub" style="font-size:12.5px"><b>${L.length}</b> lead, urut sesuai Ranking LinkedIn. Yang sudah di-FU dan belum jatuh tempo tidak ikut.${nNo?` ${withNo?'Termasuk':'Tidak termasuk'} ${nNo} yang tidak tertarik.`:''}</p>
@@ -1196,9 +1200,11 @@ function openBulkFu(){const host=$('#drawerHost');let withNo=false,P=null;
     pv.innerHTML=(n||P.skip.length||P.miss.length)?sec('Terkirim → ✓ Sudah FU',P.sent,x=>esc(x.l.name))+sec('Kasih no/email → Warm',P.con,x=>esc(x.l.name)+' · '+esc([x.phone,x.email].filter(Boolean).join(' / ')))+sec('Tidak tertarik',P.no,x=>esc(x.l.name))+sec('Dilewati Claude',P.skip,x=>esc(x.name)+(x.why?' · '+esc(x.why):''))+sec('Tidak cocok dengan data',P.miss,x=>esc(x.name)):'<p class="chip late" style="white-space:normal;margin-top:8px">Format belum terbaca. Pastikan yang ditempel adalah blok JSON "mufit_fu" dari Claude.</p>';
     g.disabled=!n;g.textContent=n?'Simpan hasil FU ('+n+' lead)':'Simpan hasil FU'};
   $('#bfGo').onclick=async()=>{if(!P)return;const g=$('#bfGo');g.disabled=true;g.textContent='Menyimpan…';let k=0;const t=P.date,seen=new Set();
-    for(const x of P.con){const l=S.leads.get(x.l.id);if(!l||seen.has(l.id))continue;seen.add(l.id);if(await saveLead({...l,phone:l.phone||x.phone,email:l.email||x.email,lastFu:t,lastContact:t,nextFu:addDays(1),history:[...(l.history||[]),{d:t,t:'Bulk FU LinkedIn: kasih '+[x.phone&&'no WA',x.email&&'email'].filter(Boolean).join(' & ')+(x.note?' ('+x.note.slice(0,120)+')':'')}]}))k++}
-    for(const x of P.no){const l=S.leads.get(x.l.id);if(!l||seen.has(l.id))continue;seen.add(l.id);if(await saveLead({...l,liStatus:'tidak_tertarik',liMinat:1,liNote:x.note||l.liNote,lastFu:t,lastContact:t,nextFu:addDays(30),history:[...(l.history||[]),{d:t,t:'Bulk FU LinkedIn: tidak tertarik'+(x.note?' ('+x.note.slice(0,120)+')':'')}]}))k++}
-    for(const x of P.sent){const l=S.leads.get(x.l.id);if(!l||seen.has(l.id))continue;seen.add(l.id);const nx=addDays(14);if(await saveLead({...l,lastFu:t,lastContact:t,nextFu:nx,history:[...(l.history||[]),{d:t,t:'Bulk FU LinkedIn terkirim (minta no WA/email). FU berikutnya '+fmt(nx)}]}))k++}
+    /* tempel ulang hasil yang sama tidak boleh menambah riwayat dobel atau memundurkan jadwal FU */
+    const hasH=(l,tx)=>(l.history||[]).some(h=>h.d===t&&h.t===tx),stale=l=>!!l.lastFu&&l.lastFu>t;
+    for(const x of P.con){const l=S.leads.get(x.l.id);if(!l||seen.has(l.id))continue;seen.add(l.id);const tx='Bulk FU LinkedIn: kasih '+[x.phone&&'no WA',x.email&&'email'].filter(Boolean).join(' & ')+(x.note?' ('+x.note.slice(0,120)+')':'');if(hasH(l,tx))continue;const co=contactOwner(l,x.phone,x.email);if(co)continue;if(await saveLead({...l,phone:l.phone||x.phone,email:l.email||x.email,lastFu:stale(l)?l.lastFu:t,lastContact:t,nextFu:stale(l)?l.nextFu:addDays(1),history:[...(l.history||[]),{d:t,t:tx}]}))k++}
+    for(const x of P.no){const l=S.leads.get(x.l.id);if(!l||seen.has(l.id))continue;seen.add(l.id);const tx='Bulk FU LinkedIn: tidak tertarik'+(x.note?' ('+x.note.slice(0,120)+')':'');if(hasH(l,tx))continue;if(await saveLead({...l,liStatus:'tidak_tertarik',liMinat:1,liNote:x.note||l.liNote,lastFu:stale(l)?l.lastFu:t,lastContact:t,nextFu:stale(l)?l.nextFu:addDays(30),history:[...(l.history||[]),{d:t,t:tx}]}))k++}
+    for(const x of P.sent){const l=S.leads.get(x.l.id);if(!l||seen.has(l.id))continue;seen.add(l.id);const nx=addDays(14);if(stale(l)||(l.lastFu===t&&(l.history||[]).some(h=>h.d===t&&/^Bulk FU LinkedIn terkirim/.test(h.t))))continue;if(await saveLead({...l,lastFu:t,lastContact:t,nextFu:nx,history:[...(l.history||[]),{d:t,t:'Bulk FU LinkedIn terkirim (minta no WA/email). FU berikutnya '+fmt(nx)}]}))k++}
     toast(k+' lead diperbarui dari bulk FU');close();render()};
   };draw()}
 function openBulk(){const host=$('#drawerHost');const SP=coldSplit();const pre=()=>({con:SP.has.map(l=>({l,name:l.name,phone:l.phone,email:l.email,note:'Kontak sudah ada di data lead ini',pre:true})),no:[],miss:[],dup:SP.dup.map(x=>({...x}))});let B=pre();const sel=new Set();const preSel=()=>{B.con.forEach(c=>sel.add('c'+c.l.id));B.dup.forEach(c=>sel.add('d'+c.l.id));(B.fill||[]).forEach(c=>sel.add('f'+c.l.id))};preSel();
